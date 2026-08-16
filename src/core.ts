@@ -167,3 +167,99 @@ export const runtime = Object.freeze({
   arch: process.arch,
   cwd: process.cwd(),
 });
+
+export type ResolvedAuth =
+  | { kind: "node-auth-key"; source: string; masked: string }
+  | { kind: "oauth-trust"; source: string; masked: string }
+  | { kind: "oauth-pair"; source: string; clientId: string }
+  | { kind: "bearer"; source: string; masked: string }
+  | { kind: "api-key"; source: string; masked: string };
+
+export interface AuthResolution {
+  found: boolean;
+  auth?: ResolvedAuth;
+  candidates: string[];
+  error?: string;
+}
+
+export function resolveAuth(
+  env: NodeJS.ProcessEnv = process.env,
+): AuthResolution {
+  const authKey = env.TS_AUTH_KEY?.trim();
+  if (authKey)
+    return {
+      found: true,
+      auth: {
+        kind: "node-auth-key",
+        source: "TS_AUTH_KEY",
+        masked: maskSecret(authKey),
+      },
+      candidates: [],
+    };
+
+  const trust = resolveCredential(env);
+  if (trust.error === "MULTIPLE_CREDENTIALS")
+    return {
+      found: false,
+      candidates: trust.candidates,
+      error: "MULTIPLE_CREDENTIALS",
+    };
+  if (trust.found && trust.source) {
+    const value = env[trust.source]?.trim() ?? "";
+    return {
+      found: true,
+      auth: {
+        kind: "oauth-trust",
+        source: trust.source,
+        masked: maskSecret(value),
+        ...(env.TS_CLIENT_ID ? { clientId: env.TS_CLIENT_ID } : {}),
+      },
+      candidates: trust.candidates,
+    };
+  }
+
+  const clientId = env.TS_OAUTH_CLIENT_ID ?? env.TS_CLIENT_ID;
+  const clientSecret = env.TS_OAUTH_CLIENT_SECRET ?? env.TS_CLIENT_SECRET;
+  if (clientId?.trim() && clientSecret?.trim())
+    return {
+      found: true,
+      auth: {
+        kind: "oauth-pair",
+        source:
+          clientId === env.TS_CLIENT_ID
+            ? "TS_CLIENT_ID+TS_CLIENT_SECRET"
+            : "TS_OAUTH_CLIENT_ID+TS_OAUTH_CLIENT_SECRET",
+        clientId: clientId.trim(),
+      },
+      candidates: [],
+    };
+
+  const accessToken = env.TS_ACCESS_TOKEN ?? env.TS_API_TOKEN;
+  if (accessToken?.trim())
+    return {
+      found: true,
+      auth: {
+        kind: "bearer",
+        source: env.TS_ACCESS_TOKEN ? "TS_ACCESS_TOKEN" : "TS_API_TOKEN",
+        masked: maskSecret(accessToken.trim()),
+      },
+      candidates: [],
+    };
+
+  if (env.TS_API_KEY?.trim())
+    return {
+      found: true,
+      auth: {
+        kind: "api-key",
+        source: "TS_API_KEY",
+        masked: maskSecret(env.TS_API_KEY.trim()),
+      },
+      candidates: [],
+    };
+
+  return {
+    found: false,
+    candidates: trust.candidates,
+    error: "CREDENTIAL_NOT_FOUND",
+  };
+}

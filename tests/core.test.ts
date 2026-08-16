@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { maskSecret, resolveConfig, resolveCredential } from "../src/core.js";
+import {
+  maskSecret,
+  resolveAuth,
+  resolveConfig,
+  resolveCredential,
+} from "../src/core.js";
 
 describe("credential resolution", () => {
   it("prefers explicit credential and masks it", () => {
@@ -24,6 +29,70 @@ describe("credential resolution", () => {
 
   it("returns a masked value without exposing the secret", () => {
     expect(maskSecret("super-secret-value")).toBe("super…lue");
+  });
+});
+
+describe("unified auth resolution (manifest precedence)", () => {
+  it("resolves TS_AUTH_KEY first", () => {
+    const result = resolveAuth({
+      TS_AUTH_KEY: "tskey-auth-abc",
+      TS_CLIENT_SECRET: "tskey-client-abcdefghijklmnop",
+    });
+    expect(result.found).toBe(true);
+    if (result.auth?.kind !== "node-auth-key")
+      throw new Error("expected auth key");
+    expect(result.auth.source).toBe("TS_AUTH_KEY");
+    expect(result.auth.masked).not.toBe("tskey-auth-abc");
+  });
+
+  it("resolves the trust credential before OAuth/access-token/api-key", () => {
+    const result = resolveAuth({
+      TS_CLIENT_SECRET: "tskey-client-abcdefghijklmnop",
+      TS_ACCESS_TOKEN: "tskey-xyz",
+      TS_API_KEY: "tskey-api",
+    });
+    if (result.auth?.kind !== "oauth-trust")
+      throw new Error("expected oauth-trust");
+    expect(result.auth.source).toBe("TS_CLIENT_SECRET");
+    expect(result.auth.masked).toBe("tskey…nop");
+  });
+
+  it("resolves the OAuth client pair after the trust credential", () => {
+    const result = resolveAuth({
+      TS_OAUTH_CLIENT_ID: "client-1",
+      TS_OAUTH_CLIENT_SECRET: "secret-1",
+      TS_ACCESS_TOKEN: "tskey-xyz",
+    });
+    if (result.auth?.kind !== "oauth-pair")
+      throw new Error("expected oauth-pair");
+    expect(result.auth.clientId).toBe("client-1");
+  });
+
+  it("resolves the bearer access token before the API key", () => {
+    const access = resolveAuth({
+      TS_ACCESS_TOKEN: "tskey-access-vlong",
+      TS_API_KEY: "tskey-api-key-long",
+    });
+    if (access.auth?.kind !== "bearer") throw new Error("expected bearer");
+    expect(access.auth.source).toBe("TS_ACCESS_TOKEN");
+    const api = resolveAuth({ TS_API_KEY: "tskey-api-key-long" });
+    if (api.auth?.kind !== "api-key") throw new Error("expected api-key");
+    expect(api.auth.source).toBe("TS_API_KEY");
+  });
+
+  it("reports ambiguous trust environments instead of guessing", () => {
+    const result = resolveAuth({
+      A: "tskey-client-one",
+      B: "tskey-client-two",
+    });
+    expect(result.found).toBe(false);
+    expect(result.error).toBe("MULTIPLE_CREDENTIALS");
+  });
+
+  it("reports not found when nothing is configured", () => {
+    const result = resolveAuth({});
+    expect(result.found).toBe(false);
+    expect(result.error).toBe("CREDENTIAL_NOT_FOUND");
   });
 });
 

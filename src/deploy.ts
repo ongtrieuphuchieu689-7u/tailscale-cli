@@ -8,7 +8,12 @@ import { ApiError, TailscaleApiClient } from "./api.js";
 import type { CreatedAuthKey } from "./api.js";
 import { tailscaleVersion, TailscaleLocal } from "./tailscale.js";
 import { cleanup as runCleanup } from "./cleanup.js";
-import { ensureDeployTags, ensureHttpsEnabled } from "./policy.js";
+import {
+  ensureDeployTags,
+  ensureFunnelAccess,
+  ensureHttpsEnabled,
+  funnelCovered,
+} from "./policy.js";
 import { ensureDaemon } from "./daemon.js";
 
 const MAX_AUTH_KEY_SECONDS = 90 * 24 * 60 * 60;
@@ -151,6 +156,49 @@ function resolveTags(config: ResolvedConfig): {
   return { tags: [tag], autoTagged: true };
 }
 
+export async function ensureFunnelReadiness(
+  config: ResolvedConfig,
+  tags: string[],
+  options: {
+    yes: boolean;
+    applyPolicy?: boolean;
+    credentialEnvName?: string;
+  },
+): Promise<string[]> {
+  const api = new TailscaleApiClient(
+    config,
+    process.env,
+    options.credentialEnvName,
+  );
+  let covered: boolean | undefined;
+  try {
+    const policy = await api.getPolicy();
+    covered = funnelCovered(policy.json, tags);
+  } catch (error) {
+    if (error instanceof ApiError && [401, 403].includes(error.status))
+      return [
+        "FUNNEL_ATTR_UNVERIFIABLE: no policy read scope, so the funnel node attribute could not be verified before running funnel (if funnel fails, re-run with --apply-policy)",
+      ];
+    throw error;
+  }
+  if (covered) return [];
+  if (!options.applyPolicy)
+    throw new Error(
+      "FUNNEL_ATTR_REQUIRED: the funnel node attribute is missing for the deployment tags; re-run with --apply-policy to auto-add it on the tailnet (before running funnel)",
+    );
+  const warnings: string[] = [
+    "SIDE_EFFECT_PLAN: auto-adding the funnel node attribute before running funnel",
+  ];
+  const provisioned = await ensureFunnelAccess(config, tags, {
+    yes: options.yes,
+    ...(options.credentialEnvName
+      ? { credentialEnvName: options.credentialEnvName }
+      : {}),
+  });
+  warnings.push(...provisioned.warnings);
+  return warnings;
+}
+
 export async function deploy(
   config: ResolvedConfig,
   options: {
@@ -163,6 +211,7 @@ export async function deploy(
     cleanup?: boolean;
     bin?: string;
     credentialEnvName?: string;
+    tagOwner?: string[];
   },
 ): Promise<DeploymentResult> {
   const warnings: string[] = [];
@@ -232,13 +281,14 @@ export async function deploy(
       try {
         const provisioned = await ensureDeployTags(config, tags, {
           yes: true,
+          ...(options.tagOwner?.length ? { owner: options.tagOwner } : {}),
           ...(options.credentialEnvName
             ? { credentialEnvName: options.credentialEnvName }
             : {}),
         });
         warnings.push(...provisioned.warnings);
-      } catch {
-        throw error;
+      } catch (provisionError) {
+        throw provisionError;
       }
       const created = await createKey();
       authKey = created.key;
@@ -270,7 +320,21 @@ export async function deploy(
     warnings.push(...https.warnings);
   }
 
-  for (const exposure of exposures) {
+  if (exposures.some((exposure) => exposure.public)) {
+    warnings.push(
+      ...(await ensureFunnelReadiness(config, tags, {
+        yes: options.yes,
+        ...(options.applyPolicy !== undefined
+          ? { applyPolicy: options.applyPolicy }
+          : {}),
+        ...(options.credentialEnvName
+          ? { credentialEnvName: options.credentialEnvName }
+          : {}),
+      })),
+    );
+  }
+
+  const runExposure = async (exposure: Exposure): Promise<void> => {
     const cmdArgs = ["--bg"];
     if (exposure.path) cmdArgs.push(`--set-path=${exposure.path}`);
     if (exposure.https) {
@@ -280,9 +344,33 @@ export async function deploy(
         );
       cmdArgs.push(`--https=${exposure.https}`);
     }
-    if (exposure.public) await local.funnel([...cmdArgs, exposure.target]);
-    else await local.serve([...cmdArgs, exposure.target]);
-  }
+    if (!exposure.public) {
+      await local.serve([...cmdArgs, exposure.target]);
+      return;
+    }
+    try {
+      await local.funnel([...cmdArgs, exposure.target]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/funnel.*(not available|node attribute not set)/i.test(message))
+        throw error;
+      let lastError = error;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          await local.funnel([...cmdArgs, exposure.target]);
+          return;
+        } catch (retryError) {
+          lastError = retryError;
+        }
+      }
+      throw new Error(
+        `FUNNEL_ATTR_REQUIRED: the funnel node attribute was provisioned but is not effective yet; Tailscale policy propagation can take ~30s. ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+      );
+    }
+  };
+
+  for (const exposure of exposures) await runExposure(exposure);
 
   const device = deviceFromStatus(
     await local.status<Record<string, unknown>>(),
@@ -298,7 +386,9 @@ export async function deploy(
     )
       return undefined;
     if (config.profile !== "ci" && config.profile !== "container")
-      return undefined;
+      warnings.push(
+        "CLEANUP_EXPLICIT: --cleanup was passed, so offline-device pruning runs on this profile (auto-cleanup otherwise only defaults to CI/container)",
+      );
     try {
       const result = await runCleanup(config, {
         dryRun: false,

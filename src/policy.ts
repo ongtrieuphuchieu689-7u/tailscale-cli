@@ -18,9 +18,8 @@ export interface PolicySyncResult {
 export interface ProvisionResult {
   provisioned: boolean;
   warnings: string[];
+  backup?: string;
 }
-
-const DEFAULT_TAG_OWNERS = ["autogroup:admin"];
 
 function normalizeTag(tag: string): string {
   return tag.startsWith("tag:") ? tag : `tag:${tag}`;
@@ -34,17 +33,23 @@ function tagOwnersOf(
   return value as Record<string, string[]>;
 }
 
-function preferredOwner(policy: PolicyDocument | undefined): string[] {
-  const owners = Object.values(tagOwnersOf(policy))[0];
-  return Array.isArray(owners) && owners.length ? owners : DEFAULT_TAG_OWNERS;
+function uniqueOwners(policy: PolicyDocument | undefined): string[] {
+  const sets = new Set(
+    Object.values(tagOwnersOf(policy)).map((owners) => JSON.stringify(owners)),
+  );
+  if (sets.size !== 1) return [];
+  const parsed = JSON.parse([...sets][0]!) as unknown;
+  return Array.isArray(parsed) ? (parsed as string[]) : [];
 }
 
-interface NodeAttrEntry {
+export interface NodeAttrEntry {
   target: string[];
   attr: string[];
 }
 
-function nodeAttrsOf(policy: PolicyDocument | undefined): NodeAttrEntry[] {
+export function nodeAttrsOf(
+  policy: PolicyDocument | undefined,
+): NodeAttrEntry[] {
   const value = policy?.nodeAttrs;
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is NodeAttrEntry => {
@@ -53,6 +58,25 @@ function nodeAttrsOf(policy: PolicyDocument | undefined): NodeAttrEntry[] {
     const attr = (entry as { attr?: unknown }).attr;
     return Array.isArray(target) && Array.isArray(attr);
   });
+}
+
+export function funnelCovered(
+  policy: PolicyDocument | undefined,
+  tags: string[],
+): boolean {
+  const targets = normalizeTagsFor(policy, tags);
+  const existing = nodeAttrsOf(policy)
+    .filter((entry) => entry.attr.includes("funnel"))
+    .flatMap((entry) => entry.target);
+  return targets.every((target) => existing.includes(target));
+}
+
+function normalizeTagsFor(
+  policy: PolicyDocument | undefined,
+  tags: string[],
+): string[] {
+  const normalized = tags.map(normalizeTag).filter(Boolean);
+  return normalized.length ? normalized : ["autogroup:member"];
 }
 
 function simpleDiff(before: string, after: string): string {
@@ -168,27 +192,29 @@ export function policyFromEnv(
 }
 
 async function syncPolicyHuJson(
-  config: ResolvedConfig,
-  raw: string,
   api: TailscaleApiClient,
+  currentRaw: string,
+  merged: string,
   etag: string | undefined,
   labels: string[],
-): Promise<void> {
-  await api.validatePolicyText(raw);
+): Promise<{ backup?: string }> {
+  await api.validatePolicyText(merged);
+  if (merged === currentRaw) return {};
   const backup = `policy.provision-${Date.now()}.bak`;
-  await writeFile(backup, raw, "utf8");
-  await api.updatePolicy(raw, etag);
+  await writeFile(backup, currentRaw, "utf8");
+  await api.updatePolicy(merged, etag);
   const verified = await api.getPolicy();
   if (!verified.json)
     throw new Error(
       `POLICY_VERIFY_FAILED: HuJSON write for ${labels.join(", ")} was not reflected`,
     );
+  return { backup };
 }
 
 export async function ensureDeployTags(
   config: ResolvedConfig,
   tags: string[],
-  options: { yes: boolean; credentialEnvName?: string },
+  options: { yes: boolean; credentialEnvName?: string; owner?: string[] },
 ): Promise<ProvisionResult> {
   const normalized = tags.map(normalizeTag).filter(Boolean);
   if (!normalized.length) return { provisioned: false, warnings: [] };
@@ -202,7 +228,13 @@ export async function ensureDeployTags(
   const missing = normalized.filter((tag) => !(tag in tagOwners));
   if (!missing.length) return { provisioned: false, warnings: [] };
 
-  const owner = preferredOwner(current.json);
+  const owner = options.owner?.length
+    ? options.owner.map(normalizeTag)
+    : uniqueOwners(current.json);
+  if (!owner.length)
+    throw new Error(
+      "POLICY_TAG_OWNER_REQUIRED: could not determine a safe owner for the missing tagOwners (the policy has no tagOwners or mixes different owners); pass --tag-owner <owner> or set TS_TAG_OWNER",
+    );
   const raw = await api.getPolicyHuJson();
   const merged = ensureHuJsonKey(
     raw.content,
@@ -221,13 +253,19 @@ export async function ensureDeployTags(
     throw new Error(
       "POLICY_PROVISION_CONFIRMATION_REQUIRED: pass --yes to auto-provision tags",
     );
-  await syncPolicyHuJson(config, merged, api, raw.etag, missing);
-  return {
-    provisioned: true,
-    warnings: [
-      `PROVISIONED_TAGS: added tagOwners for ${missing.join(", ")} (${owner.join(", ")}) via HuJSON-preserving write`,
-    ],
-  };
+  const { backup } = await syncPolicyHuJson(
+    api,
+    raw.content,
+    merged,
+    raw.etag,
+    missing,
+  );
+  const warnings = [
+    `PROVISIONED_TAGS: added tagOwners for ${missing.join(", ")} (${owner.join(", ")}) via HuJSON-preserving write`,
+  ];
+  if (backup)
+    warnings.push(`POLICY_BACKUP: pre-write policy saved to ${backup}`);
+  return { provisioned: true, warnings, ...(backup ? { backup } : {}) };
 }
 
 export async function ensureFunnelAccess(
@@ -268,11 +306,21 @@ export async function ensureFunnelAccess(
     throw new Error(
       "POLICY_PROVISION_CONFIRMATION_REQUIRED: pass --yes to auto-enable funnel",
     );
-  await syncPolicyHuJson(config, merged, api, raw.etag, needed);
+  const { backup } = await syncPolicyHuJson(
+    api,
+    raw.content,
+    merged,
+    raw.etag,
+    needed,
+  );
+  const warnings = [
+    `PROVISIONED_FUNNEL: added funnel node attribute for ${needed.join(", ")} via HuJSON-preserving write`,
+  ];
+  if (backup)
+    warnings.push(`POLICY_BACKUP: pre-write policy saved to ${backup}`);
   return {
     provisioned: true,
-    warnings: [
-      `PROVISIONED_FUNNEL: added funnel node attribute for ${needed.join(", ")} via HuJSON-preserving write`,
-    ],
+    warnings,
+    ...(backup ? { backup } : {}),
   };
 }

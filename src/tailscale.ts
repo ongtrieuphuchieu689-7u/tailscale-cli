@@ -113,7 +113,9 @@ export class TailscaleLocal {
     args: string[],
     options: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
   ): Promise<LocalCommandResult> {
-    const { stdout, stderr } = await execFileAsync(this.bin, args, {
+    const socket = options.env?.TS_TAILSCALE_SOCKET?.trim();
+    const commandArgs = socket ? [`--socket=${socket}`, ...args] : args;
+    const { stdout, stderr } = await execFileAsync(this.bin, commandArgs, {
       timeout: options.timeoutMs ?? 60_000,
       windowsHide: true,
       env: { ...process.env, ...options.env },

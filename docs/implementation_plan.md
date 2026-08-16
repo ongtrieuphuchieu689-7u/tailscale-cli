@@ -26,17 +26,17 @@
 
 ## 2. Stack được chọn
 
-- Runtime: **Node.js 24 Active LTS**; hỗ trợ Node 22 Maintenance LTS nếu không dùng API riêng của 24. Khai báo `engines.node >=22`.
-- Language: **TypeScript 6.x**, `strict: true`, `noUncheckedIndexedAccess: true`, `exactOptionalPropertyTypes: true`.
+- Runtime: **Node.js >=22** (CI tests Node 22 and Node 24). Khai báo `engines.node >=22`.
+- Language: **TypeScript ^5.8** (strict: `strict: true`, `noUncheckedIndexedAccess: true`, `exactOptionalPropertyTypes: true`). TypeScript 6.x chưa bắt buộc — nhưng giữ buil như `tsc -p tsconfig.build.json` (không dùng `tsx` để build) để chuyển nâng cấp sau dễ dàng.
 - Module: ESM-first, `module: NodeNext`, `moduleResolution: NodeNext`; `package.json` có `type: module`, `exports`, `types`, `bin`.
-- CLI parser: **Commander 15** vì phổ biến, type support tốt, ESM phù hợp. Không tự xây parser.
+- CLI parser: **Commander ^14** vì phổ biến, type support tốt, ESM phù hợp. Không tự xây parser. (Plan cũ ghi Commander 15 — 14 đảm bảo tương thích lockfile hiện tại; migration là thay version không đổi API.)
 - Interactive menu: **@inquirer/prompts** vì API hiện đại, TypeScript-friendly, hỗ trợ input/select/confirm/checkbox và dễ bỏ qua khi non-TTY.
 - Validation: **Zod** cho config/env/manifest schema.
-- HTTP: native `fetch` + `AbortSignal.timeout`, không thêm client nặng nếu không cần.
-- Logging: **pino** cho JSON logs, pretty transport chỉ ở dev/TTY; secret redaction bắt buộc.
-- HuJSON: thư viện HuJSON tương thích Tailscale, bọc trong `PolicyDocument` adapter; không để parser rò ra toàn codebase.
-- Tests: Vitest unit/integration; `tsd` cho public type declarations; Playwright không cần cho CLI.
-- Quality: ESLint flat config + typescript-eslint, Prettier, c8/Vitest coverage.
+- HTTP: native `fetch` + `AbortSignal.timeout`, không thêm client nặng.
+- Logging: không dùng pino — output là JSON envelope (stdout) + warnings/sideEffects chính chủ; secret redaction (`maskSecret`, `sanitizeServerText`) bắt buộc. (Đây là deviation chủ đích: CLI xuất một `Envelope` duy nhất, không stream log.)
+- HuJSON: bộ merge HuJSON tối giản trong `src/hujson.ts` (preserve comment/format/trailing-comma), bọc bằng `ensureHuJsonKey/ensureHuJsonArrayItem`; không để parser rò ra toàn codebase.
+- Tests: Vitest unit/integration; type-check dùng `tsc --noEmit` (không dùng `tsd`).
+- Quality: Prettier + `tsc --noEmit` cho lint (không dùng ESLint runtime riêng); coverage bằng `@vitest/coverage-v8`.
 
 Tham khảo: [TypeScript](https://www.npmjs.com/package/typescript) · [Commander](https://github.com/tj/commander.js) · [Node TypeScript modules](https://nodejs.org/docs/latest/api/typescript.html) · [Node release schedule](https://github.com/nodejs/release/blob/main/schedule.json).
 
@@ -161,18 +161,18 @@ docs/{user_requirement.md,user_requirement_addendum_2026-08-16.md,implementation
     "dev": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
-    "format:check": "prettier --check .",
+    "lint": "npm run typecheck && npm run format:check",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:types": "tsd",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
-    "pack:check": "npm pack --dry-run"
+    "test:types": "tsc --noEmit",
+    "check": "npm run typecheck && npm test",
+    "pack:check": "npm run build && npm pack --dry-run"
   }
 }
 ```
 
-`typescript`, `tsx`, `@types/node`, `commander`, `@inquirer/prompts`, `zod`, `pino`, `vitest`, `eslint`, `typescript-eslint`, `prettier`, `tsd` phải được pin bằng lockfile; Dependabot/Renovate chỉ tạo PR, không tự đổi runtime trong production.
+`typescript`, `tsx`, `@types/node`, `commander`, `@inquirer/prompts`, `zod`, `vitest`, `@vitest/coverage-v8`, `prettier` phải được pin bằng lockfile; Dependabot/Renovate chỉ tạo PR, không tự đổi runtime trong production. (pino/eslint/typescript-eslint/tsd không dùng — xem §2.)
 
 ## 7. VS Code acceptance checklist
 
