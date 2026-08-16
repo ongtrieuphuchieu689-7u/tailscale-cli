@@ -1,0 +1,15 @@
+{
+  "name": "tailsacle-cli",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "engines": {"node": ">=22"},
+  "bin": {"tailsacle-cli": "./dist/cli.js", "tscli": "./dist/cli.js"},
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {".": {"types": "./dist/index.d.ts", "import": "./dist/index.js"}},
+  "files": ["dist", "README.md", "LICENSE", "docs"],
+  "scripts": {"dev": "tsx src/cli.ts", "build": "tsc -p tsconfig.build.json", "typecheck": "tsc --noEmit", "test": "vitest run", "check": "npm run typecheck && npm test", "smoke": "npm run build && node dist/cli.js --help && node dist/cli.js agent-manifest --json", "pack:check": "npm run build && npm pack --dry-run"},
+  "dependencies": {"commander": "^14.0.0", "zod": "^3.25.0"},
+  "devDependencies": {"@types/node": "^22.15.0", "tsx": "^4.19.0", "typescript": "^5.8.0", "vitest": "^3.1.0"}
+}
