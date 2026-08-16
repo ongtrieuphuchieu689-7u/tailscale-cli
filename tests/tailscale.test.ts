@@ -6,8 +6,15 @@ import { TailscaleLocal } from "../src/tailscale.js";
 
 async function fakeTailscaleBin(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "tscli-shim-"));
-  const shim = join(dir, "tailscale");
-  await writeFile(shim, "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\"\n");
+  const shim = join(
+    dir,
+    process.platform === "win32" ? "tailscale.cmd" : "tailscale",
+  );
+  const script =
+    process.platform === "win32"
+      ? "@echo off\r\nfor %%A in (%*) do @echo %%A\r\n"
+      : "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\"\n";
+  await writeFile(shim, script);
   await chmod(shim, 0o755);
   return shim;
 }

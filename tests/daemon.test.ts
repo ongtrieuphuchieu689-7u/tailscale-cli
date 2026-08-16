@@ -89,8 +89,16 @@ describe("userspace daemon lifecycle tracking", () => {
       const pid = child.pid!;
       await writePid(pid);
       const result = await stopUserspaceDaemon();
-      expect(result.stopped).toBe(true);
-      expect(result.pid).toBe(pid);
+      if (process.platform === "win32") {
+        // Userspace daemons are only started and tracked off-Windows; on
+        // Windows the process command line cannot be verified so the pid is
+        // treated as untracked (and the stale pidfile is cleared).
+        expect(result.stopped).toBe(false);
+        expect(result.message).toContain("UNTRACKED_PID");
+      } else {
+        expect(result.stopped).toBe(true);
+        expect(result.pid).toBe(pid);
+      }
       await expect(readTrackedDaemon()).toBeUndefined();
     });
   });
