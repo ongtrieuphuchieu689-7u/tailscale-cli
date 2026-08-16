@@ -7,3 +7,6 @@ coverage
 
 *.bak
 policy.provision-*.bak
+
+gh-workspace.jsonc
+.env.*
