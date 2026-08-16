@@ -30,4 +30,25 @@ describe('config resolution', () => {
     expect(config.ephemeral).toBe(true);
     expect(config.acceptRoutes).toBe(false);
   });
+
+  it('defaults ssh, preauthorized and accept-dns to true when env is absent', () => {
+    const config = resolveConfig({ CI: 'true', TS_HOSTNAME: 'node-a' });
+    expect(config.ssh).toBe(true);
+    expect(config.preauthorized).toBe(true);
+    expect(config.acceptDns).toBe(true);
+    expect(config.keyExpiry).toBe('max');
+  });
+
+  it('defaults reusable + warns for long-lived vm profiles', () => {
+    const config = resolveConfig({ TS_PROFILE: 'vm', TS_HOSTNAME: 'web-01', TS_TAGS: 'prod' });
+    expect(config.reusable).toBe(true);
+    expect(config.warnings).toContain('REUSABLE_KEY_DEFAULTED: auth key created for this long-lived node is reusable until it expires');
+  });
+
+  it('appends a run id to CI hostnames when TS_HOSTNAME is absent', () => {
+    const config = resolveConfig({ CI: 'true', GITHUB_RUN_ID: '98765', TS_TAGS: 'ci' });
+    expect(config.hostname.endsWith('-98765')).toBe(true);
+    expect(config.hostname.length).toBeLessThanOrEqual(63);
+    expect(config.source.hostname).toBe('os.hostname+run');
+  });
 });

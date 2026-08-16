@@ -5,6 +5,14 @@ import { ensureDeployTags, ensureHttpsEnabled } from './policy.js';
 
 const MAX_AUTH_KEY_SECONDS = 90 * 24 * 60 * 60;
 
+export function resolveKeyExpiry(configured: string): number {
+  const raw = (configured ?? '').trim().toLowerCase();
+  if (raw === '' || raw === 'max' || raw === 'unlimited') return MAX_AUTH_KEY_SECONDS;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) throw new Error('KEY_EXPIRY_INVALID: TS_KEY_EXPIRY must be "max" or a positive number of seconds');
+  return seconds;
+}
+
 function truthy(value: string | undefined): boolean {
   return value !== undefined && ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }
@@ -88,6 +96,8 @@ export async function deploy(config: ResolvedConfig, options: { dryRun: boolean;
   const warnings: string[] = [];
   const binary = await tailscaleVersion(options.bin);
   const exposures = resolveExposures(options.expose, options.funnel);
+  const expirySeconds = resolveKeyExpiry(config.keyExpiry);
+  if (config.source.keyExpiry === 'default') warnings.push(`KEY_EXPIRY_DEFAULT: using server max auth-key lifetime (${expirySeconds}s); set TS_KEY_EXPIRY to override`);
   if (options.dryRun) {
     return { binary, device: { dryRun: true, config }, authKeySource: process.env.TS_AUTH_KEY ? 'provided' : 'created', exposures, warnings };
   }
@@ -108,7 +118,7 @@ export async function deploy(config: ResolvedConfig, options: { dryRun: boolean;
         ephemeral: config.ephemeral,
         preauthorized: config.preauthorized,
         tags,
-        expirySeconds: MAX_AUTH_KEY_SECONDS,
+        expirySeconds,
       });
       authKey = created.key;
       authKeySource = 'created';
@@ -125,7 +135,7 @@ export async function deploy(config: ResolvedConfig, options: { dryRun: boolean;
         ephemeral: config.ephemeral,
         preauthorized: config.preauthorized,
         tags,
-        expirySeconds: MAX_AUTH_KEY_SECONDS,
+        expirySeconds,
       });
       authKey = created.key;
       authKeySource = 'created';

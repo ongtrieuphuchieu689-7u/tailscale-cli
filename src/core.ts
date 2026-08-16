@@ -66,23 +66,33 @@ export function resolveConfig(env: NodeJS.ProcessEnv = process.env): ResolvedCon
   if (!tags.length && ['container', 'ci', 'vm'].includes(profile)) warnings.push('NO_TAGS_CONFIGURED: reusable infrastructure should normally use a tag');
   if (env.TS_TAILNET === undefined) warnings.push('TAILNET_DEFAULTED: using tailnet "-"');
 
+  let hostname = slug(env.TS_HOSTNAME || os.hostname());
+  if (!env.TS_HOSTNAME && profile === 'ci') {
+    const runId = env.GITHUB_RUN_ID || env.CI_BUILD_ID || env.CIRCLE_WORKFLOW_ID || '';
+    if (runId) hostname = `${slug(os.hostname())}-${runId}`.slice(0, 63);
+  }
+
+  const reusable = bool(env.TS_REUSABLE, !ephemeral && (profile === 'vm' || profile === 'windows'));
+  if (env.TS_REUSABLE === undefined && reusable) warnings.push('REUSABLE_KEY_DEFAULTED: auth key created for this long-lived node is reusable until it expires');
+
   return {
     profile,
     tailnet: env.TS_TAILNET?.trim() || '-',
-    hostname: slug(env.TS_HOSTNAME || os.hostname()),
+    hostname,
     tags,
     ssh: bool(env.TS_SSH, true),
     keyExpiry: env.TS_KEY_EXPIRY?.trim() || 'max',
     preauthorized: bool(env.TS_PREAUTHORIZED, true),
-    reusable: bool(env.TS_REUSABLE, !ephemeral && (profile === 'vm' || profile === 'windows')),
+    reusable,
     ephemeral,
     acceptDns: bool(env.TS_ACCEPT_DNS, true),
     acceptRoutes: bool(env.TS_ACCEPT_ROUTES, profile === 'subnet-router' || profile === 'exit-node'),
     cleanupAfter: number(env.TS_CLEANUP_OFFLINE_AFTER, 3600),
     source: {
       profile: env.TS_PROFILE ? 'TS_PROFILE' : 'runtime',
-      hostname: env.TS_HOSTNAME ? 'TS_HOSTNAME' : 'os.hostname',
+      hostname: env.TS_HOSTNAME ? 'TS_HOSTNAME' : profile === 'ci' ? 'os.hostname+run' : 'os.hostname',
       tags: env.TS_TAGS ? 'TS_TAGS' : 'default',
+      keyExpiry: env.TS_KEY_EXPIRY ? 'TS_KEY_EXPIRY' : 'default',
     },
     warnings,
   };

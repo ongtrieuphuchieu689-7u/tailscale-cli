@@ -127,6 +127,8 @@ Cleanup is restricted to devices that are offline beyond `TS_CLEANUP_OFFLINE_AFT
 | `TS_SSH` | Enable SSH intent, default `true` |
 | `TS_ACCEPT_DNS` | Accept DNS, default `true` |
 | `TS_ACCEPT_ROUTES` | Accept subnet/exit routes when enabled by profile |
+| `TS_PREAUTHORIZED` | Create pre-authorized auth keys, default `true` |
+| `TS_KEY_EXPIRY` | Auth-key lifetime in seconds or `max` (server maximum, default). Set `TS_KEY_EXPIRY=3600` to pin a shorter lifetime |
 | `TS_EPHEMERAL` | Override ephemeral node behavior |
 | `TS_REUSABLE` | Override auth-key reuse behavior |
 | `TS_AUTH_KEY` | Pre-created node auth key |

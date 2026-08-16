@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { parseExposure, resolveExposures } from '../src/deploy.js';
+import { resolveKeyExpiry, parseExposure, resolveExposures } from '../src/deploy.js';
+
+describe('key expiry resolution', () => {
+  it('defaults to the server max lifetime', () => {
+    expect(resolveKeyExpiry('max')).toBe(90 * 24 * 60 * 60);
+    expect(resolveKeyExpiry('')).toBe(90 * 24 * 60 * 60);
+  });
+
+  it('accepts explicit seconds', () => {
+    expect(resolveKeyExpiry('3600')).toBe(3600);
+  });
+
+  it('rejects invalid values', () => {
+    expect(() => resolveKeyExpiry('soon')).toThrow('KEY_EXPIRY_INVALID');
+    expect(() => resolveKeyExpiry('-5')).toThrow('KEY_EXPIRY_INVALID');
+  });
+});
 
 describe('exposure parsing', () => {
   it('turns a port into a loopback HTTP target', () => {
