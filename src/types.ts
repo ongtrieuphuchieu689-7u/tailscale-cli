@@ -74,4 +74,5 @@ export interface DeploymentResult {
   device: Device | Record<string, unknown>;
   authKeySource: 'provided' | 'created';
   exposures: Exposure[];
+  warnings: string[];
 }

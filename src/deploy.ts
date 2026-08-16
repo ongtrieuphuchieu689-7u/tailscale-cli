@@ -1,6 +1,7 @@
 import type { Device, DeploymentResult, Exposure, ResolvedConfig } from './types.js';
-import { TailscaleApiClient } from './api.js';
+import { ApiError, TailscaleApiClient } from './api.js';
 import { tailscaleVersion, TailscaleLocal } from './tailscale.js';
+import { ensureDeployTags, ensureHttpsEnabled } from './policy.js';
 
 const MAX_AUTH_KEY_SECONDS = 90 * 24 * 60 * 60;
 
@@ -77,11 +78,18 @@ function redactEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return copy;
 }
 
+function isTagProvisionError(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status !== 400) return false;
+  const message = error.message.toLowerCase();
+  return message.includes('tags') && (message.includes('invalid') || message.includes('not permitted') || message.includes('must have tags'));
+}
+
 export async function deploy(config: ResolvedConfig, options: { dryRun: boolean; yes: boolean; expose: string[]; funnel: boolean; bin?: string }): Promise<DeploymentResult> {
+  const warnings: string[] = [];
   const binary = await tailscaleVersion(options.bin);
   const exposures = resolveExposures(options.expose, options.funnel);
   if (options.dryRun) {
-    return { binary, device: { dryRun: true, config }, authKeySource: process.env.TS_AUTH_KEY ? 'provided' : 'created', exposures };
+    return { binary, device: { dryRun: true, config }, authKeySource: process.env.TS_AUTH_KEY ? 'provided' : 'created', exposures, warnings };
   }
 
   const local = new TailscaleLocal(binary.path);
@@ -93,15 +101,35 @@ export async function deploy(config: ResolvedConfig, options: { dryRun: boolean;
   if (!authKey) {
     const api = new TailscaleApiClient(config);
     if (!api.hasCredentials()) throw new Error('AUTH_KEY_NOT_CONFIGURED: set TS_AUTH_KEY or configure TS_API_KEY/TS_ACCESS_TOKEN/OAuth client credentials');
-    const created = await api.createAuthKey({
-      reusable: config.reusable,
-      ephemeral: config.ephemeral,
-      preauthorized: config.preauthorized,
-      tags: config.tags.map(normalizeTag),
-      expirySeconds: MAX_AUTH_KEY_SECONDS,
-    });
-    authKey = created.key;
-    authKeySource = 'created';
+    const tags = config.tags.map(normalizeTag);
+    try {
+      const created = await api.createAuthKey({
+        reusable: config.reusable,
+        ephemeral: config.ephemeral,
+        preauthorized: config.preauthorized,
+        tags,
+        expirySeconds: MAX_AUTH_KEY_SECONDS,
+      });
+      authKey = created.key;
+      authKeySource = 'created';
+    } catch (error) {
+      if (!isTagProvisionError(error) || !options.yes) throw error;
+      try {
+        const provisioned = await ensureDeployTags(config, tags, { yes: true });
+        warnings.push(...provisioned.warnings);
+      } catch {
+        throw error;
+      }
+      const created = await api.createAuthKey({
+        reusable: config.reusable,
+        ephemeral: config.ephemeral,
+        preauthorized: config.preauthorized,
+        tags,
+        expirySeconds: MAX_AUTH_KEY_SECONDS,
+      });
+      authKey = created.key;
+      authKeySource = 'created';
+    }
   }
 
   const args = buildUpArgs(config);
@@ -112,6 +140,11 @@ export async function deploy(config: ResolvedConfig, options: { dryRun: boolean;
   const status = await local.status<Record<string, unknown>>();
   const state = typeof status.BackendState === 'string' ? status.BackendState : undefined;
   if (state !== 'Running') throw new Error(`TAILSCALE_NOT_RUNNING: BackendState=${state ?? 'unknown'}`);
+
+  if (exposures.length && options.yes) {
+    const https = await ensureHttpsEnabled(config, { yes: true });
+    warnings.push(...https.warnings);
+  }
 
   for (const exposure of exposures) {
     const cmdArgs = ['--bg'];
@@ -124,5 +157,5 @@ export async function deploy(config: ResolvedConfig, options: { dryRun: boolean;
     else await local.serve([...cmdArgs, exposure.target]);
   }
 
-  return { binary, device: deviceFromStatus(await local.status<Record<string, unknown>>()), authKeySource, exposures };
+  return { binary, device: deviceFromStatus(await local.status<Record<string, unknown>>()), authKeySource, exposures, warnings };
 }

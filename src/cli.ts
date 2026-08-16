@@ -7,7 +7,7 @@ import { resolveConfig, resolveCredential, runtime } from './core.js';
 import { deploy } from './deploy.js';
 import { findTailscale, tailscaleVersion, TailscaleLocal } from './tailscale.js';
 import { manifest } from './manifest.js';
-import { policyFromEnv, policySync } from './policy.js';
+import { ensureFunnelAccess, ensureHttpsEnabled, policyFromEnv, policySync } from './policy.js';
 import type { Envelope } from './types.js';
 
 const program = new Command();
@@ -47,7 +47,7 @@ program.command('deploy').description('Join the tailnet and optionally configure
   try {
     const config = resolveConfig();
     const result = await deploy(config, { dryRun: Boolean(options.dryRun), yes: Boolean(options.yes), expose: options.expose ?? [], funnel: Boolean(options.funnel), ...(options.bin ? { bin: options.bin } : {}) });
-    emit('deploy', result, config.warnings, options.dryRun ? [] : ['authenticate node', 'configure Tailscale state', ...(result.exposures.length ? ['configure Serve/Funnel'] : [])], process.platform === 'win32' ? [] : ['root/admin may be required by tailscaled']);
+    emit('deploy', result, [...config.warnings, ...result.warnings], options.dryRun ? [] : ['authenticate node', 'configure Tailscale state', ...(result.exposures.length ? ['configure Serve/Funnel'] : []), ...(result.warnings.length ? ['update tailnet policy'] : [])], process.platform === 'win32' ? [] : ['root/admin may be required by tailscaled']);
   } catch (error) { fail('deploy', error); }
 });
 
@@ -73,14 +73,38 @@ program.command('update-bin').description('Explicitly update the installed Tails
   } catch (error) { fail('update-bin', error); }
 });
 
-program.command('funnel').description('Configure Tailscale Funnel for a target').argument('<target>').option('--https <port>').option('--path <path>').action(async (target: string, options: { https?: string; path?: string }) => {
+program.command('funnel').description('Configure Tailscale Funnel for a target').argument('<target>').option('--https <port>').option('--path <path>').option('--yes').action(async (target: string, options: { https?: string; path?: string; yes?: boolean }) => {
   try {
+    const config = resolveConfig();
     const local = new TailscaleLocal(await findTailscale());
     const args = ['--bg'];
     if (options.https) { const port = Number(options.https); if (![443, 8443, 10000].includes(port)) throw new Error('FUNNEL_PORT_UNSUPPORTED: use 443, 8443, or 10000'); args.push(`--https=${port}`); }
     if (options.path) args.push(`--set-path=${options.path.startsWith('/') ? options.path : `/${options.path}`}`);
-    await local.funnel([...args, target]);
-    emit('funnel', { target, public: true, https: options.https ? Number(options.https) : 443, path: options.path ?? '/' }, [], ['configure Funnel']);
+    const fullArgs = [...args, target];
+    const run = () => local.funnel(fullArgs);
+    const provisionWarnings: string[] = [];
+    if (options.yes) {
+      const https = await ensureHttpsEnabled(config, { yes: true });
+      provisionWarnings.push(...https.warnings);
+    }
+    try {
+      await run();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/funnel.*(not available|node attribute not set)/i.test(message) || !options.yes) throw error;
+      const provisioned = await ensureFunnelAccess(config, config.tags, { yes: true });
+      provisionWarnings.push(...provisioned.warnings);
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          await run();
+          break;
+        } catch (retryError) {
+          if (attempt === 3) throw retryError;
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+        }
+      }
+    }
+    emit('funnel', { target, public: true, https: options.https ? Number(options.https) : 443, path: options.path ?? '/' }, provisionWarnings, ['configure Funnel', ...(provisionWarnings.length ? ['update tailnet policy', 'enable HTTPS'] : [])]);
   } catch (error) { fail('funnel', error); }
 });
 

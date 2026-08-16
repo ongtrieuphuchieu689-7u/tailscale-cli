@@ -244,6 +244,15 @@ export class TailscaleApiClient {
     ]);
     return { nameservers: nameservers.data, preferences: preferences.data, searchpaths: searchpaths.data };
   }
+
+  async getTailnetSettings(): Promise<{ httpsEnabled?: boolean }> {
+    const { data } = await this.request<{ httpsEnabled?: boolean }>(`/tailnet/${this.tailnet()}/settings`, {}, ['all:read']);
+    return data;
+  }
+
+  async enableHttps(): Promise<void> {
+    await this.request<void>(`/tailnet/${this.tailnet()}/settings`, { method: 'PATCH', body: JSON.stringify({ httpsEnabled: true }) }, ['all']);
+  }
 }
 
 export function apiCredentialHint(env: NodeJS.ProcessEnv = process.env): string {

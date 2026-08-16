@@ -10,6 +10,7 @@ Safe TypeScript CLI for real Tailscale deployment workflows. Official binaries a
 - discovers the installed Tailscale binary and can explicitly update it;
 - creates a Tailscale auth key through the API when `TS_AUTH_KEY` is not supplied;
 - joins/configures the current machine with `tailscale up` and verifies `BackendState=Running`;
+- auto-provisions the tailnet so a tagged deployment can connect: adds missing `tagOwners`, adds the `funnel` node attribute and enables tailnet HTTPS certificates when `--yes` is passed, each change is warned, validated, backed up and ETag-protected;
 - configures private Serve or public Funnel exposures;
 - reads tailnet DNS settings;
 - performs guarded HuJSON policy validation/diff/write with backup, ETag and confirmation;
@@ -68,10 +69,12 @@ npx tailsacle-cli deploy --dry-run --expose 3000 --json
 
 ```bash
 npx tailsacle-cli serve 3000 --https 443 --path api --json
-npx tailsacle-cli funnel 3000 --https 443 --path api --json
+npx tailsacle-cli funnel 3000 --https 443 --path api --yes --json
 ```
 
 Funnel ports are validated before execution; supported public HTTPS ports are 443, 8443 and 10000.
+
+With `--yes`, `funnel` and `deploy` auto-provision what the tailnet is missing (tagged auth keys, `tagOwners`, the `funnel` node attribute, and tailnet HTTPS certificates) with warnings, so a trust credential can reach a working connection end to end.
 
 ## Policy
 
