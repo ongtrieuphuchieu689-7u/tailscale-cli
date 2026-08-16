@@ -27,6 +27,20 @@ async function tryRun(command: string, args: string[]): Promise<boolean> {
   }
 }
 
+async function trySystemctl(args: string[]): Promise<boolean> {
+  try {
+    const { stdout, stderr } = await execFileAsync("systemctl", args, {
+      timeout: 20_000,
+      windowsHide: true,
+    });
+    if (/["']?systemd["']?\s+is\s+not\s+running/i.test(`${stdout}\n${stderr}`))
+      return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -44,9 +58,11 @@ export async function inspectDaemon(): Promise<DaemonState> {
     };
   }
 
-  if (await tryRun("systemctl", ["is-active", "tailscaled"]))
+  if (await trySystemctl(["is-active", "tailscaled"]))
     return { running: true, warnings: [], actions: [] };
   if (await tryRun("pgrep", ["-x", "tailscaled"]))
+    return { running: true, warnings: [], actions: [] };
+  if ((await userspacePids()).length > 0)
     return { running: true, warnings: [], actions: [] };
 
   const warnings: string[] = [];
@@ -61,8 +77,8 @@ export async function inspectDaemon(): Promise<DaemonState> {
   return { running: false, warnings, actions: [] };
 }
 
-function cachedDaemonPath(): string | undefined {
-  const version = cacheBinaryVersion();
+async function cachedDaemonPath(): Promise<string | undefined> {
+  const version = await cacheBinaryVersion();
   if (!version) return undefined;
   const path_ = join(cacheBinDir(), `tailscaled-${version}`);
   return existsSync(path_) ? path_ : undefined;
@@ -70,7 +86,7 @@ function cachedDaemonPath(): string | undefined {
 
 async function resolveDaemonBin(): Promise<string> {
   if (await tryRun("tailscaled", ["--version"])) return "tailscaled";
-  return cachedDaemonPath() ?? "tailscaled";
+  return (await cachedDaemonPath()) ?? "tailscaled";
 }
 
 async function startUserspaceDaemon(): Promise<{
@@ -113,18 +129,15 @@ async function startUserspaceDaemon(): Promise<{
   child.unref();
   for (let attempt = 0; attempt < 10; attempt += 1) {
     await sleep(500);
-    if (await tryRun("pgrep", ["-x", "tailscaled"])) {
-      const pids = await userspacePids();
-      if (pids[0]) {
-        writeTrackedDaemon({
-          pid: pids[0],
-          socket,
-          command: command.join(" "),
-          startedAt: new Date().toISOString(),
-        });
-        if (!process.env.TS_TAILSCALE_SOCKET)
-          process.env.TS_TAILSCALE_SOCKET = socket;
-      }
+    const pids = await userspacePids();
+    if (pids[0]) {
+      writeTrackedDaemon({
+        pid: pids[0],
+        socket,
+        command: command.join(" "),
+        startedAt: new Date().toISOString(),
+      });
+      if (!process.env.TS_TAILSCALE_SOCKET) process.env.TS_TAILSCALE_SOCKET = socket;
       return { started: true, command: command.join(" ") };
     }
   }
@@ -137,32 +150,29 @@ export async function ensureDaemon(): Promise<DaemonState> {
   if (process.platform === "win32") return inspected;
 
   const actions: string[] = [];
-  if (await tryRun("sudo", ["systemctl", "enable", "--now", "tailscaled"])) {
+  if (await trySystemctl(["enable", "--now", "tailscaled"])) {
     actions.push("sudo systemctl enable --now tailscaled");
     return { running: true, warnings: [], actions };
   }
 
-  if (!existsSync("/dev/net/tun")) {
-    const userspace = await startUserspaceDaemon();
-    if (userspace.started) {
-      return {
-        running: true,
-        warnings: [
-          `DAEMON_USERSPACE: started a userspace-networking tailscaled (socket ${process.env.TS_TAILSCALE_SOCKET ?? "/var/run/tailscale/tailscaled.sock"}); no /dev/net/tun is required`,
-        ],
-        actions: [userspace.command],
-      };
-    }
+  const userspace = await startUserspaceDaemon();
+  if (userspace.started) {
     return {
-      running: false,
+      running: true,
       warnings: [
-        ...inspected.warnings,
-        `DAEMON_USERSPACE_FAILED: could not start a userspace daemon (${userspace.command}); start it manually with the exact command above`,
+        `DAEMON_USERSPACE: started a userspace-networking tailscaled (socket ${process.env.TS_TAILSCALE_SOCKET ?? "/var/run/tailscale/tailscaled.sock"}); no /dev/net/tun is required`,
       ],
-      actions,
+      actions: [userspace.command],
     };
   }
-  return { running: false, warnings: inspected.warnings, actions };
+  return {
+    running: false,
+    warnings: [
+      ...inspected.warnings,
+      `DAEMON_USERSPACE_FAILED: could not start a userspace daemon (${userspace.command}); start it manually with the exact command above`,
+    ],
+    actions,
+  };
 }
 
 export interface TrackedDaemon {
