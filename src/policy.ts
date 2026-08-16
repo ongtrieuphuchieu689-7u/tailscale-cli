@@ -31,6 +31,11 @@ function tagOwnersOf(policy: PolicyDocument | undefined): Record<string, string[
   return value as Record<string, string[]>;
 }
 
+function preferredOwner(policy: PolicyDocument | undefined): string[] {
+  const owners = Object.values(tagOwnersOf(policy))[0];
+  return Array.isArray(owners) && owners.length ? owners : DEFAULT_TAG_OWNERS;
+}
+
 interface NodeAttrEntry {
   target: string[];
   attr: string[];
@@ -71,12 +76,12 @@ function simpleDiff(before: string, after: string): string {
   return lines.join('\n');
 }
 
-export async function policySync(config: ResolvedConfig, file: string, options: { dryRun: boolean; yes: boolean }): Promise<PolicySyncResult> {
+export async function policySync(config: ResolvedConfig, file: string, options: { dryRun: boolean; yes: boolean; credentialEnvName?: string }): Promise<PolicySyncResult> {
   if (!existsSync(file)) throw new Error(`POLICY_FILE_NOT_FOUND: ${file}`);
   const desired = await readFile(file, 'utf8');
   if (!desired.trim()) throw new Error('POLICY_FILE_EMPTY');
 
-  const api = new TailscaleApiClient(config);
+  const api = new TailscaleApiClient(config, process.env, options.credentialEnvName);
   const current = await api.getPolicy();
   const diff = simpleDiff(current.content, desired);
   if (!diff) return { changed: false, validated: true, written: false, ...(current.etag ? { etag: current.etag } : {}), diff: '' };
@@ -95,8 +100,8 @@ export async function policySync(config: ResolvedConfig, file: string, options: 
   return { changed: true, validated: true, written: true, ...(verified.etag ? { etag: verified.etag } : {}), backup, diff };
 }
 
-export async function ensureHttpsEnabled(config: ResolvedConfig, options: { yes: boolean }): Promise<ProvisionResult> {
-  const api = new TailscaleApiClient(config);
+export async function ensureHttpsEnabled(config: ResolvedConfig, options: { yes: boolean; credentialEnvName?: string }): Promise<ProvisionResult> {
+  const api = new TailscaleApiClient(config, process.env, options.credentialEnvName);
   if (!api.hasCredentials()) return { provisioned: false, warnings: [] };
   let httpsEnabled: boolean | undefined;
   try {
@@ -115,8 +120,8 @@ export function policyFromEnv(env: NodeJS.ProcessEnv = process.env): string | un
   return env.TS_POLICY_FILE || env.TS_POLICY;
 }
 
-async function syncPolicy(config: ResolvedConfig, desired: PolicyDocument, current: PolicySnapshot): Promise<void> {
-  const api = new TailscaleApiClient(config);
+async function syncPolicy(config: ResolvedConfig, desired: PolicyDocument, current: PolicySnapshot, credentialEnvName?: string): Promise<void> {
+  const api = new TailscaleApiClient(config, process.env, credentialEnvName);
   const content = JSON.stringify(desired, null, 2);
   await api.validatePolicyText(content);
   const backup = `policy.provision-${Date.now()}.bak`;
@@ -126,31 +131,31 @@ async function syncPolicy(config: ResolvedConfig, desired: PolicyDocument, curre
   if (!verified.json) throw new Error('POLICY_VERIFY_FAILED: API returned no policy');
 }
 
-export async function ensureDeployTags(config: ResolvedConfig, tags: string[], options: { yes: boolean }): Promise<ProvisionResult> {
+export async function ensureDeployTags(config: ResolvedConfig, tags: string[], options: { yes: boolean; credentialEnvName?: string }): Promise<ProvisionResult> {
   const normalized = tags.map(normalizeTag).filter(Boolean);
   if (!normalized.length) return { provisioned: false, warnings: [] };
-  const api = new TailscaleApiClient(config);
+  const api = new TailscaleApiClient(config, process.env, options.credentialEnvName);
   const current = await api.getPolicy();
   const tagOwners = tagOwnersOf(current.json);
   const missing = normalized.filter((tag) => !(tag in tagOwners));
   if (!missing.length) return { provisioned: false, warnings: [] };
 
+  const owner = preferredOwner(current.json);
   const desired: PolicyDocument = {
     ...current.json,
-    tagOwners: { ...tagOwners, ...Object.fromEntries(missing.map((tag) => [tag, DEFAULT_TAG_OWNERS])) },
-    nodeAttrs: withFunnelAttr(nodeAttrsOf(current.json), missing),
+    tagOwners: { ...tagOwners, ...Object.fromEntries(missing.map((tag) => [tag, owner])) },
   };
-  const approved = await confirm(`Auto-add tagOwners ${missing.join(', ')} (owned by ${DEFAULT_TAG_OWNERS.join(', ')}) and funnel access to the tailnet policy?`, options.yes);
+  const approved = await confirm(`Auto-add tagOwners ${missing.join(', ')} (owned by ${owner.join(', ')}) to the tailnet policy?`, options.yes);
   if (!approved) throw new Error('POLICY_PROVISION_CONFIRMATION_REQUIRED: pass --yes to auto-provision tags');
-  await syncPolicy(config, desired, current);
+  await syncPolicy(config, desired, current, options.credentialEnvName);
   return {
     provisioned: true,
-    warnings: [`PROVISIONED_TAGS: added tagOwners for ${missing.join(', ')} (${DEFAULT_TAG_OWNERS.join(', ')}) and funnel node attribute`],
+    warnings: [`PROVISIONED_TAGS: added tagOwners for ${missing.join(', ')} (${owner.join(', ')})`],
   };
 }
 
-export async function ensureFunnelAccess(config: ResolvedConfig, tags: string[], options: { yes: boolean }): Promise<ProvisionResult> {
-  const api = new TailscaleApiClient(config);
+export async function ensureFunnelAccess(config: ResolvedConfig, tags: string[], options: { yes: boolean; credentialEnvName?: string }): Promise<ProvisionResult> {
+  const api = new TailscaleApiClient(config, process.env, options.credentialEnvName);
   const current = await api.getPolicy();
   const targets = tags.map(normalizeTag).filter(Boolean);
   const covered = targets.length
@@ -162,6 +167,6 @@ export async function ensureFunnelAccess(config: ResolvedConfig, tags: string[],
   const desired: PolicyDocument = { ...current.json, nodeAttrs };
   const approved = await confirm(`Auto-add funnel node attribute for ${(targets.length ? targets : ['autogroup:member']).join(', ')} to the tailnet policy?`, options.yes);
   if (!approved) throw new Error('POLICY_PROVISION_CONFIRMATION_REQUIRED: pass --yes to auto-enable funnel');
-  await syncPolicy(config, desired, current);
+  await syncPolicy(config, desired, current, options.credentialEnvName);
   return { provisioned: true, warnings: [`PROVISIONED_FUNNEL: added funnel node attribute for ${(targets.length ? targets : ['autogroup:member']).join(', ')}`] };
 }

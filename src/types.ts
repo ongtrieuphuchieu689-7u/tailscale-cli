@@ -29,12 +29,13 @@ export interface CredentialResolution {
 export interface Envelope<T> {
   ok: boolean;
   command: string;
+  durationMs: number;
   resolved?: T;
   warnings: string[];
   requiredPrivileges: string[];
   sideEffects: string[];
   retryable: boolean;
-  error?: { code: string; message: string };
+  error?: { code: string; message: string; status?: number };
 }
 
 export interface Device {
@@ -75,4 +76,5 @@ export interface DeploymentResult {
   authKeySource: 'provided' | 'created';
   exposures: Exposure[];
   warnings: string[];
+  cleanup?: { candidates: string[]; deleted: string[]; skipped?: boolean };
 }

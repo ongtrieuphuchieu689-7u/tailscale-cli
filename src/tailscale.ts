@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
+import { cacheBinPath, ensureBinary } from './binary.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -25,10 +26,11 @@ function parseJson<T>(text: string): T | undefined {
   }
 }
 
-export async function findTailscale(explicit?: string): Promise<string> {
+export async function findTailscale(explicit?: string, options: { download?: boolean } = {}): Promise<string> {
   const candidates = [
     explicit,
     process.env.TS_TAILSCALE_BIN,
+    cacheBinPath(),
     process.platform === 'win32' ? 'tailscale.exe' : 'tailscale',
     process.platform === 'win32' ? resolvePath(process.env.ProgramFiles ?? 'C:\\Program Files', 'Tailscale', 'tailscale.exe') : '/usr/bin/tailscale',
     process.platform === 'win32' ? resolvePath(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Tailscale', 'tailscale.exe') : '/usr/local/bin/tailscale',
@@ -44,11 +46,20 @@ export async function findTailscale(explicit?: string): Promise<string> {
     }
   }
 
+  if (options.download !== false) {
+    try {
+      const downloaded = await ensureBinary();
+      return downloaded.path;
+    } catch (downloadError) {
+      throw new Error(`TAILSCALE_BINARY_NOT_FOUND: no system binary and auto-download failed (${downloadError instanceof Error ? downloadError.message : String(downloadError)}); set TS_TAILSCALE_BIN or install Tailscale`);
+    }
+  }
+
   throw new Error('TAILSCALE_BINARY_NOT_FOUND: install Tailscale or set TS_TAILSCALE_BIN');
 }
 
-export async function tailscaleVersion(bin?: string): Promise<BinaryInfo> {
-  const path = await findTailscale(bin);
+export async function tailscaleVersion(bin?: string, options: { download?: boolean } = {}): Promise<BinaryInfo> {
+  const path = await findTailscale(bin, options);
   const { stdout, stderr } = await execFileAsync(path, ['version'], { timeout: 10_000, windowsHide: true });
   const version = (stdout || stderr).split(/\r?\n/).find((line) => /\d+\.\d+\.\d+/.test(line))?.trim() ?? 'unknown';
   return { path, version };

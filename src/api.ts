@@ -77,12 +77,12 @@ export class TailscaleApiClient {
   private readonly auth: AuthState;
   private oauthToken?: { value: string; expiresAt: number; key: string };
 
-  constructor(config: ResolvedConfig, env: NodeJS.ProcessEnv = process.env) {
+  constructor(config: ResolvedConfig, env: NodeJS.ProcessEnv = process.env, credentialEnvName?: string) {
     const accessToken = env.TS_ACCESS_TOKEN ?? env.TS_API_TOKEN;
     const apiKey = env.TS_API_KEY;
     const clientId = env.TS_OAUTH_CLIENT_ID ?? env.TS_CLIENT_ID;
     const clientSecret = env.TS_OAUTH_CLIENT_SECRET;
-    const trustCredential = env.TS_CLIENT_SECRET;
+    const trustCredential = credentialEnvName ? env[credentialEnvName]?.trim() : env.TS_CLIENT_SECRET?.trim();
     this.config = config;
 
     if (accessToken) this.auth = { source: 'bearer', token: accessToken };

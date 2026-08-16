@@ -8,7 +8,7 @@ function normalized(value: string | undefined): string {
 
 function isOffline(device: Device, afterSeconds: number): boolean {
   if (device.online === true) return false;
-  if (!device.lastSeen) return true;
+  if (!device.lastSeen) return false;
   const seen = Date.parse(device.lastSeen);
   return Number.isFinite(seen) && Date.now() - seen >= afterSeconds * 1000;
 }
@@ -22,16 +22,19 @@ function protectedDevice(device: Device): boolean {
 function matchesDeployment(device: Device, config: ResolvedConfig): boolean {
   if (protectedDevice(device)) return false;
   const wantedHostname = normalized(config.hostname);
-  const names = [normalized(device.name), normalized(device.hostname), normalized(device.dnsName)];
-  const hostnameMatch = names.some((name) => name === wantedHostname || name.includes(wantedHostname));
+  const hostExact = (device.hostname ?? '').toLowerCase().replace(/\.$/, '') === config.hostname.toLowerCase();
+  const dnsLabel = (device.dnsName ?? '').toLowerCase().replace(/\.$/, '');
+  const dnsExact = dnsLabel === config.hostname.toLowerCase() || dnsLabel.startsWith(`${config.hostname.toLowerCase()}.`);
+  const nameExact = normalized(device.name) === wantedHostname;
+  const hostnameMatch = hostExact || dnsExact || nameExact;
   const tags = new Set((device.tags ?? []).map((tag) => tag.replace(/^tag:/, '').toLowerCase()));
   const wantedTags = config.tags.map((tag) => tag.replace(/^tag:/, '').toLowerCase());
   const tagMatch = wantedTags.length > 0 && wantedTags.every((tag) => tags.has(tag));
   return wantedTags.length ? hostnameMatch && tagMatch : hostnameMatch;
 }
 
-export async function cleanup(config: ResolvedConfig, options: { dryRun: boolean; yes: boolean }): Promise<{ candidates: Device[]; deleted: string[] }> {
-  const api = new TailscaleApiClient(config);
+export async function cleanup(config: ResolvedConfig, options: { dryRun: boolean; yes: boolean; credentialEnvName?: string }): Promise<{ candidates: Device[]; deleted: string[] }> {
+  const api = new TailscaleApiClient(config, process.env, options.credentialEnvName);
   const devices = await api.listDevices();
   const candidates = devices.filter((device) => isOffline(device, config.cleanupAfter) && matchesDeployment(device, config));
   if (options.dryRun || candidates.length === 0) return { candidates, deleted: [] };

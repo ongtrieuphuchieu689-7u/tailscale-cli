@@ -7,6 +7,15 @@ export function maskSecret(value: string): string {
   return value.length < 10 ? '***' : `${value.slice(0, 5)}…${value.slice(-3)}`;
 }
 
+export function credentialEnvName(env: NodeJS.ProcessEnv = process.env, preferredName?: string): string | undefined {
+  if (preferredName) {
+    const value = env[preferredName]?.trim();
+    return value?.startsWith('tskey-client-') ? preferredName : undefined;
+  }
+  const resolved = resolveCredential(env);
+  return resolved.found ? resolved.source : undefined;
+}
+
 export function resolveCredential(env: NodeJS.ProcessEnv = process.env): CredentialResolution {
   const exactTrustMatches = Object.entries(env).filter(([, value]) => value?.startsWith('tskey-client-'));
   const explicit = env.TS_CLIENT_SECRET?.trim();
@@ -63,8 +72,9 @@ export function resolveConfig(env: NodeJS.ProcessEnv = process.env): ResolvedCon
   const ephemeral = bool(env.TS_EPHEMERAL, profile === 'ci' || profile === 'container');
   const tags = (env.TS_TAGS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
   const warnings: string[] = [];
-  if (!tags.length && ['container', 'ci', 'vm'].includes(profile)) warnings.push('NO_TAGS_CONFIGURED: reusable infrastructure should normally use a tag');
+  if (!tags.length && ['container', 'ci', 'vm', 'funnel-app'].includes(profile)) warnings.push('NO_TAGS_CONFIGURED: reusable infrastructure should normally use a tag');
   if (env.TS_TAILNET === undefined) warnings.push('TAILNET_DEFAULTED: using tailnet "-"');
+  if (env.TS_TAILNET !== undefined && !/^[a-zA-Z0-9][a-zA-Z0-9-]*\.ts\.net$/.test(env.TS_TAILNET)) warnings.push(`TAILNET_DOMAIN_UNUSUAL: "${env.TS_TAILNET}" is not a default *.ts.net tailnet; Funnel DNS and HTTPS rely on a Tailscale-hosted domain`);
 
   let hostname = slug(env.TS_HOSTNAME || os.hostname());
   if (!env.TS_HOSTNAME && profile === 'ci') {
@@ -72,7 +82,7 @@ export function resolveConfig(env: NodeJS.ProcessEnv = process.env): ResolvedCon
     if (runId) hostname = `${slug(os.hostname())}-${runId}`.slice(0, 63);
   }
 
-  const reusable = bool(env.TS_REUSABLE, !ephemeral && (profile === 'vm' || profile === 'windows'));
+  const reusable = bool(env.TS_REUSABLE, !ephemeral && (profile === 'vm' || profile === 'windows' || profile === 'funnel-app'));
   if (env.TS_REUSABLE === undefined && reusable) warnings.push('REUSABLE_KEY_DEFAULTED: auth key created for this long-lived node is reusable until it expires');
 
   return {
