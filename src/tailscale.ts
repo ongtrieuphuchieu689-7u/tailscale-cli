@@ -56,13 +56,13 @@ export async function tailscaleVersion(bin?: string): Promise<BinaryInfo> {
 
 export class TailscaleLocal {
   readonly bin: string;
+
   constructor(bin: string) {
     this.bin = bin;
   }
 
-  async run(args: string[], options: { input?: string; timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}): Promise<LocalCommandResult> {
+  async run(args: string[], options: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}): Promise<LocalCommandResult> {
     const { stdout, stderr } = await execFileAsync(this.bin, args, {
-      input: options.input,
       timeout: options.timeoutMs ?? 60_000,
       windowsHide: true,
       env: { ...process.env, ...options.env },
@@ -83,8 +83,11 @@ export class TailscaleLocal {
   }
 
   async up(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-    const secretEnv = { ...env };
-    await this.run(['up', ...args], { env: secretEnv, timeoutMs: 120_000 });
+    await this.run(['up', ...args], { env, timeoutMs: 120_000 });
+  }
+
+  async update(yes = false): Promise<void> {
+    await this.run(yes ? ['update', '--yes'] : ['update'], { timeoutMs: 180_000 });
   }
 
   async set(args: string[]): Promise<void> {
