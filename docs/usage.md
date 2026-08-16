@@ -4,7 +4,21 @@
 
 Run `tailsacle-cli doctor --detect-credentials --json` first. The command does not modify the tailnet or local Tailscale state; `doctor --deep` additionally runs read-only API probes (credentials, `devices:core`/`policy_file`/`dns`/`all` scopes, HTTPS, MagicDNS, funnel attribute readiness, daemon, root) with no side effects.
 
-Running `tailsacle-cli` with no arguments in a TTY opens the interactive menu (profile, target/port, policy action, binary update) and prints the equivalent non-interactive command before executing it.
+Running `tailsacle-cli` with no arguments in a TTY opens the interactive menu (profile, target/port, policy action, binary update) and prints the equivalent non-interactive command before executing it. When no credentials are found and the terminal is a TTY, the CLI prompts interactively for a `tskey-client-` trust credential.
+
+## Configuration file
+
+Place `tailscale-cli.config.json` in your project root or pass `--config <path>`. Config file values are used as defaults; environment variables always override:
+
+```json
+{
+  "profile": "vm",
+  "hostname": "web-01",
+  "tags": ["prod", "web"],
+  "keyExpiry": "max",
+  "ephemeral": false
+}
+```
 
 ## Deployment
 
@@ -27,7 +41,7 @@ Policy writes require a fetched remote policy, diff, remote validation, local ba
 ## Funnel and DNS
 
 - `funnel` refuses ephemeral nodes (they never publish public DNS), auto-detects the target from `$PORT`, supports `--tcp <public:local>` and repeatable `--expose 443=3000 --expose 443/api=3001`, and verifies the public A record (dns.google + getent) up to `--verify-timeout` (default 120s) before reporting the public URL.
-- `dns --enable-magicdns --yes` enables MagicDNS on the tailnet; plain `dns` reads nameservers/preferences/search paths.
+- `dns --enable-magicdns --yes` enables MagicDNS on the tailnet; `dns --enable-magicdns --dry-run` previews the action without applying; plain `dns` reads nameservers/preferences/search paths.
 - Custom `TS_TAILNET` domains (not `*.ts.net`) emit a warning because Funnel DNS and HTTPS rely on a Tailscale-hosted domain.
 
 ## Daemon lifecycle
@@ -40,4 +54,4 @@ Policy writes require a fetched remote policy, diff, remote validation, local ba
 
 ## Automation
 
-Pass `--json` to commands that support stable JSON output. Every envelope carries `ok`, `command`, `durationMs`, `resolved`, `warnings`, `requiredPrivileges`, `sideEffects`, `retryable` and `error`. The versioned `agent-manifest` contract (`manifestVersion: 2`) describes per-tool inputs/outputs, scopes, privileges, side effects, retryability, confirmation requirements and warning codes. Exit codes: `1` general, `3` credential, `4` permission/scope, `5` binary, `6` local Tailscale, `7` funnel/DNS, `8` policy, `9` privilege, `75` retryable. Secrets are masked and server error text is scrubbed (`tskey-…`, `Authorization`) before surfacing.
+Pass `--json` to commands that support stable JSON output. Every envelope carries `ok`, `command`, `durationMs`, `resolved`, `warnings`, `requiredPrivileges`, `sideEffects`, `retryable` and `error`. Errors include a `docsUrl` linking to relevant documentation. The `status --show-resolution` flag includes credential source and masked value in the resolved output. The versioned `agent-manifest` contract (`manifestVersion: 2`) describes per-tool inputs/outputs, scopes, privileges, side effects, retryability, confirmation requirements and warning codes. Exit codes: `1` general, `3` credential, `4` permission/scope, `5` binary, `6` local Tailscale, `7` funnel/DNS, `8` policy, `9` privilege, `75` retryable. Secrets are masked and server error text is scrubbed (`tskey-…`, `Authorization`) before surfacing.

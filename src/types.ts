@@ -54,7 +54,7 @@ export interface Envelope<T> {
   requiredPrivileges: string[];
   sideEffects: string[];
   retryable: boolean;
-  error?: { code: string; message: string; status?: number };
+  error?: { code: string; message: string; status?: number; docsUrl?: string };
 }
 
 export interface Device {
