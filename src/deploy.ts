@@ -1,6 +1,6 @@
 import type { Device, DeploymentResult, Exposure, ResolvedConfig } from './types.js';
 import { TailscaleApiClient } from './api.js';
-import { findTailscale, tailscaleVersion, TailscaleLocal } from './tailscale.js';
+import { tailscaleVersion, TailscaleLocal } from './tailscale.js';
 
 const MAX_AUTH_KEY_SECONDS = 90 * 24 * 60 * 60;
 
@@ -13,16 +13,18 @@ function normalizeTag(tag: string): string {
 }
 
 export function parseExposure(value: string): Exposure {
-  const [left, rawPath] = value.split('#', 2);
+  const [rawTarget, rawPath] = value.trim().split('#', 2);
   const path = rawPath ? (rawPath.startsWith('/') ? rawPath : `/${rawPath}`) : undefined;
-  const normalized = left.trim();
-  const target = normalized.includes('://') ? normalized : `http://127.0.0.1:${normalized}`;
-  if (target.includes('://') && !/^https?:\/\/|^tcp:\/\/|^https\+insecure:\/\//.test(target)) {
-    throw new Error(`EXPOSE_INVALID_TARGET: ${normalized}`);
-  }
-  const portMatch = normalized.match(/:(\d+)(?:\/|$)/) ?? normalized.match(/^(\d+)$/);
-  const https = portMatch ? Number(portMatch[1]) : undefined;
-  return { target, public: false, path, https };
+  const normalized = rawTarget.trim();
+  let target: string;
+
+  if (/^\d+$/.test(normalized)) target = `http://127.0.0.1:${normalized}`;
+  else if (/^(?:https?|tcp|https\+insecure):\/\//.test(normalized)) target = normalized;
+  else if (/^(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(normalized)) target = `http://${normalized}`;
+  else throw new Error(`EXPOSE_INVALID_TARGET: ${normalized}`);
+
+  const portMatch = target.match(/:(\d+)(?:\/|$)/);
+  return { target, public: false, path, https: portMatch ? Number(portMatch[1]) : undefined };
 }
 
 export function resolveExposures(values: string[], publicFunnel: boolean): Exposure[] {
@@ -36,7 +38,6 @@ function buildUpArgs(config: ResolvedConfig): string[] {
     `--accept-routes=${config.acceptRoutes}`,
     config.ssh ? '--ssh' : '--ssh=false',
   ];
-
   if (config.profile === 'exit-node') args.push('--advertise-exit-node');
   if (config.profile === 'subnet-router' && process.env.TS_ADVERTISE_ROUTES) args.push(`--advertise-routes=${process.env.TS_ADVERTISE_ROUTES}`);
   if (config.profile === 'funnel-app') args.push('--advertise-connector');
@@ -48,18 +49,16 @@ function deviceFromStatus(status: unknown): Device | Record<string, unknown> {
   if (!status || typeof status !== 'object') return { status };
   const data = status as Record<string, unknown>;
   const self = data.Self;
-  if (self && typeof self === 'object') {
-    const item = self as Record<string, unknown>;
-    return {
-      id: String(item.ID ?? ''),
-      name: typeof item.DNSName === 'string' ? item.DNSName : undefined,
-      dnsName: typeof item.DNSName === 'string' ? item.DNSName : undefined,
-      hostname: typeof item.HostName === 'string' ? item.HostName : undefined,
-      os: typeof item.OS === 'string' ? item.OS : undefined,
-      online: true,
-    } satisfies Device;
+  if (!self || typeof self !== 'object') return data;
+  const item = self as Record<string, unknown>;
+  const device: Device = { id: String(item.ID ?? ''), online: true };
+  if (typeof item.DNSName === 'string') {
+    device.name = item.DNSName;
+    device.dnsName = item.DNSName;
   }
-  return data;
+  if (typeof item.HostName === 'string') device.hostname = item.HostName;
+  if (typeof item.OS === 'string') device.os = item.OS;
+  return device;
 }
 
 function redactEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -80,18 +79,19 @@ export async function deploy(config: ResolvedConfig, options: { dryRun: boolean;
   }
 
   const local = new TailscaleLocal(binary.path);
-  let authKey = process.env.TS_AUTH_KEY;
+  let authKey = process.env.TS_AUTH_KEY?.trim();
   let authKeySource: 'provided' | 'created' = 'provided';
+
+  if (authKey && !authKey.startsWith('tskey-auth-')) throw new Error('AUTH_KEY_FORMAT_INVALID: TS_AUTH_KEY must start with tskey-auth-');
 
   if (!authKey) {
     const api = new TailscaleApiClient(config);
     if (!api.hasCredentials()) throw new Error('AUTH_KEY_NOT_CONFIGURED: set TS_AUTH_KEY or configure TS_API_KEY/TS_ACCESS_TOKEN/OAuth client credentials');
-    const tags = config.tags.map(normalizeTag);
     const created = await api.createAuthKey({
       reusable: config.reusable,
       ephemeral: config.ephemeral,
       preauthorized: config.preauthorized,
-      tags,
+      tags: config.tags.map(normalizeTag),
       expirySeconds: MAX_AUTH_KEY_SECONDS,
     });
     authKey = created.key;
@@ -118,6 +118,5 @@ export async function deploy(config: ResolvedConfig, options: { dryRun: boolean;
     else await local.serve([...cmdArgs, exposure.target]);
   }
 
-  const verifiedStatus = await local.status<Record<string, unknown>>();
-  return { binary, device: deviceFromStatus(verifiedStatus), authKeySource, exposures };
+  return { binary, device: deviceFromStatus(await local.status<Record<string, unknown>>()), authKeySource, exposures };
 }
