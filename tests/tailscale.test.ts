@@ -6,21 +6,20 @@ import { TailscaleLocal } from "../src/tailscale.js";
 
 async function fakeTailscaleBin(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "tscli-shim-"));
-  const shim = join(
-    dir,
-    process.platform === "win32" ? "tailscale.cmd" : "tailscale",
-  );
-  const script =
-    process.platform === "win32"
-      ? "@echo off\r\nfor %%A in (%*) do @echo %%A\r\n"
-      : "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\"\n";
-  await writeFile(shim, script);
+  const shim = join(dir, "tailscale");
+  await writeFile(shim, "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\"\n");
   await chmod(shim, 0o755);
   return shim;
 }
 
+// The POSIX shell shim cannot be spawned on Windows (execFile rejects .cmd
+// wrappers with EINVAL and there is no portable script executable); the
+// --socket pass-through logic is platform-independent and covered by the
+// Linux matrix jobs.
+const skipOnWindows = process.platform === "win32";
+
 describe("TailscaleLocal --socket pass-through", () => {
-  it("prefixes --socket from options.env when set", async () => {
+  it.skipIf(skipOnWindows)("prefixes --socket from options.env when set", async () => {
     const shim = await fakeTailscaleBin();
     const local = new TailscaleLocal(shim);
     const result = await local.run(["status"], {
@@ -32,7 +31,9 @@ describe("TailscaleLocal --socket pass-through", () => {
     expect(result.stdout.split("\n")[1]).toBe("status");
   });
 
-  it("falls back to process.env.TS_TAILSCALE_SOCKET when options.env is absent", async () => {
+  it.skipIf(skipOnWindows)(
+    "falls back to process.env.TS_TAILSCALE_SOCKET when options.env is absent",
+    async () => {
     const previous = process.env.TS_TAILSCALE_SOCKET;
     process.env.TS_TAILSCALE_SOCKET = "/tmp/shared-sock/tailscaled.sock";
     try {
@@ -47,7 +48,9 @@ describe("TailscaleLocal --socket pass-through", () => {
     }
   });
 
-  it("passes args through unchanged when no socket is configured", async () => {
+  it.skipIf(skipOnWindows)(
+    "passes args through unchanged when no socket is configured",
+    async () => {
     const previous = process.env.TS_TAILSCALE_SOCKET;
     if (previous !== undefined) delete process.env.TS_TAILSCALE_SOCKET;
     try {
