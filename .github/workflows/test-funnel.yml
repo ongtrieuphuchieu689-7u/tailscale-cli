@@ -1,0 +1,118 @@
+name: Test Funnel (npmjs)
+
+on:
+  workflow_dispatch:
+    inputs:
+      keepalive_minutes:
+        description: Minutes to keep the funnel tunnel alive (job max is 360)
+        required: false
+        type: number
+        default: 120
+
+permissions:
+  contents: read
+
+jobs:
+  funnel-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      TS_CLIENT_SECRET: ${{ secrets.TS_CLIENT_SECRET || vars.TS_CLIENT_SECRET }}
+      TS_TAILNET: ${{ secrets.TS_TAILNET || vars.TS_TAILNET || 'tailadac87.ts.net' }}
+      TS_HOSTNAME: opencode-ci-${{ github.run_id }}
+      TS_TAGS: opencode
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install and start tailscaled (userspace networking)
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          echo 'FLAGS="--tun=userspace-networking"' | sudo tee /etc/default/tailscaled
+          sudo systemctl enable --now tailscaled
+          for i in $(seq 1 10); do systemctl is-active tailscaled >/dev/null 2>&1 && break; sleep 1; done
+          systemctl is-active tailscaled >/dev/null 2>&1 || { sudo systemctl restart tailscaled; sleep 3; }
+          sudo tailscale set --operator="$USER"
+          tailscale version
+
+      - name: Install newest opencode-ai and tailsacle-cli from npmjs
+        run: |
+          npm install -g opencode-ai@latest tailsacle-cli@latest || sudo npm install -g opencode-ai@latest tailsacle-cli@latest
+          echo "node $(node -v) npm $(npm -v)"
+          tailsacle-cli --version
+          opencode --version || true
+          which tailscale opencode tailsacle-cli
+
+      - name: CLI must auto-detect the trust credential from the environment
+        run: |
+          OUT="$(tailsacle-cli doctor --detect-credentials --json)"
+          echo "$OUT"
+          echo "$OUT" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const c=JSON.parse(d).resolved.credential;if(!c||!c.found){console.error('CREDENTIAL_NOT_AUTO_DETECTED');process.exit(1)}console.log('auto-detected source:',c.source,'masked:',c.masked)})"
+          echo "api credential hint: $(echo "$OUT" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).resolved.apiCredential))")"
+
+      - name: Verify API auto-auth and join the tailnet
+        run: |
+          tailsacle-cli dns --json
+          OUT="$(tailsacle-cli deploy --yes --json)"
+          echo "$OUT"
+          echo "$OUT" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const j=JSON.parse(d);const dev=j.resolved&&j.resolved.device;const dns=dev&&dev.dnsName&&dev.dnsName.replace(/\.\s*$/,'');if(!dns){console.error('NO_DNS_NAME');process.exit(1)}const base='https://'+dns+'/';require('fs').appendFileSync(process.env.GITHUB_ENV,'FUNNEL_BASE='+base+'\n');console.log('funnel_base='+base)})"
+
+      - name: Configure opencode for the workspace and start opencode serve
+        run: |
+          cat > opencode.json <<'JSON'
+          {
+            "$schema": "https://opencode.ai/config.json",
+            "theme": { "mode": "dark" }
+          }
+          JSON
+          export OPENCODE_SERVE_PASS="$(openssl rand -hex 8)"
+          umask 077
+          echo -n "$OPENCODE_SERVE_PASS" > serve-pass.txt
+          echo "opencode workspace: $(pwd) ($(git rev-parse --short HEAD 2>/dev/null || echo no-git))"
+          nohup setsid env OPENCODE_SERVE_PASS="$OPENCODE_SERVE_PASS" opencode serve --port 4096 > opencode-serve.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:4096/ >/dev/null 2>&1; then echo "opencode serve ready on :4096"; break; fi
+            sleep 2
+          done
+          curl -fsI http://127.0.0.1:4096/ >/dev/null || { echo "serve failed to start"; tail -40 opencode-serve.log; exit 1; }
+
+      - name: Publish Funnel tunnel and print access info
+        run: |
+          tailsacle-cli funnel http://127.0.0.1:4096 --https 443 --yes --json
+          echo
+          echo "==================== ACCESS ===================="
+          echo "OpenCode UI : $FUNNEL_BASE"
+          echo "Serve pass  : $(cat serve-pass.txt)"
+          echo "CLI version : $(tailsacle-cli --version)"
+          echo "Node name   : $TS_HOSTNAME"
+          echo "==============================================="
+          {
+            echo "### OpenCode funnel (test run)"
+            echo ""
+            echo "\`$FUNNEL_BASE\`"
+            echo ""
+            echo "- serve pass: \`$(cat serve-pass.txt)\`"
+            echo "- job: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keepalive (supervise serve, hold the tunnel open)
+        run: |
+          keep=$(( (${{ inputs.keepalive_minutes }} * 60) - 60 ))
+          [ "$keep" -lt 60 ] && keep=60
+          deadline=$(( $(date +%s) + keep ))
+          echo "keeping alive until $(date -u -d @$deadline +%FT%TZ)"
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            if ! curl -fsS http://127.0.0.1:4096/ >/dev/null 2>&1; then
+              echo "[keepalive] serve down, restarting ($(date -u +%FT%TZ))"
+              nohup setsid env OPENCODE_SERVE_PASS="$(cat serve-pass.txt)" opencode serve --port 4096 >> opencode-serve.log 2>&1 &
+              disown
+            fi
+            markers=$(( $(date +%s) / 600 ))
+            [ "$markers" -gt "${last:-0}" ] && { echo "[keepalive] heartbeat $(date -u +%FT%TZ) tunnel $FUNNEL_BASE"; last="$markers"; }
+            sleep 60
+          done
+          echo "keepalive finished; tunnel closes when the job ends"
+          tailscale funnel off 2>/dev/null || true
