@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { readFileSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
 import { apiCredentialHint, ApiError, TailscaleApiClient } from './api.js';
 import { cleanup } from './cleanup.js';
@@ -10,8 +13,19 @@ import { manifest } from './manifest.js';
 import { ensureFunnelAccess, ensureHttpsEnabled, policyFromEnv, policySync } from './policy.js';
 import type { Envelope } from './types.js';
 
+function packageVersion(): string {
+  try {
+    const here = fileURLToPath(new URL('.', import.meta.url));
+    const pkg = JSON.parse(readFileSync(resolvePath(here, '..', 'package.json'), 'utf8')) as { version?: string };
+    if (pkg.version) return pkg.version;
+  } catch {
+    // Fall through to a safe default when package.json is not reachable.
+  }
+  return '0.0.0';
+}
+
 const program = new Command();
-program.name('tailsacle-cli').description('Safe, zero-config Tailscale deployment CLI').version('0.2.0').option('--json', 'emit a stable JSON envelope');
+program.name('tailsacle-cli').description('Safe, zero-config Tailscale deployment CLI').version(packageVersion()).option('--json', 'emit a stable JSON envelope');
 
 function emit<T>(command: string, resolved: T, warnings: string[] = [], sideEffects: string[] = [], requiredPrivileges: string[] = []): void {
   const envelope: Envelope<T> = { ok: true, command, resolved, warnings, requiredPrivileges, sideEffects, retryable: false };
