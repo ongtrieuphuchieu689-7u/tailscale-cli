@@ -71,8 +71,9 @@ clamped with `KEY_EXPIRY_CLAMPED`. Override per run with `deploy --key-expiry 36
   (`tailscaled --tun=userspace-networking --state=… --socket=…`). On Linux the fallback
   reuses the versioned static `tailscaled` downloaded into the binary cache when no system
   `tailscaled` exists, and runs as the current user (socket/state default under the binary
-  cache dir) so no root/`sudo` is required; `TS_TAILSCALE_SOCKET`/`TS_TAILSCALED_STATE`
-  relocate the socket/state. `DAEMON_USERSPACE` warns whenever this fallback starts.
+  cache dir, plus `--statedir` so the TLS cert store works) so no root/`sudo` is required;
+  `TS_TAILSCALE_SOCKET`/`TS_TAILSCALED_STATE` relocate the socket/state.
+  `DAEMON_USERSPACE` warns whenever this fallback starts.
 
 ## 6. Verification
 

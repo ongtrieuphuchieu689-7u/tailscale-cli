@@ -108,6 +108,7 @@ async function startUserspaceDaemon(): Promise<{
   const args = [
     "--tun=userspace-networking",
     `--state=${state}`,
+    ...(root ? [] : [`--statedir=${cacheBinDir()}`]),
     `--socket=${socket}`,
   ];
   for (const path_ of [dirname(state), dirname(socket)]) {
