@@ -1,9 +1,95 @@
 import os from 'node:os';
 import type { CredentialResolution, Profile, ResolvedConfig } from './types.js';
-const named=['TS_TRUST_CREDENTIAL','TS_API_TRUST','TAILSCALE_TRUST_CREDENTIAL','TAILSCALE_API_TRUST'];
-const mask=(s:string)=>s.length<8?'***':`${s.slice(0,5)}…${s.slice(-3)}`;
-export function resolveCredential(env:NodeJS.ProcessEnv=process.env):CredentialResolution { const candidates=Object.entries(env).filter(([,v])=>typeof v==='string'&&v.startsWith('tskey-client-')); const explicit=env.TS_CLIENT_SECRET; const namedHit=named.find(k=>env[k]); const selected=explicit?['TS_CLIENT_SECRET',explicit]:namedHit?[namedHit,env[namedHit]!]:candidates.length===1?[candidates[0]![0],candidates[0]![1]!]:undefined; if(candidates.length>1&&!explicit&&!namedHit)return {found:false,candidates:candidates.map(([k])=>k),error:'MULTIPLE_CREDENTIALS'}; if(!selected)return {found:false,candidates:candidates.map(([k])=>k),error:'CREDENTIAL_NOT_FOUND'}; return {found:true,source:selected[0],masked:mask(selected[1]),candidates:candidates.map(([k])=>k)}; }
-function bool(v:string|undefined,d:boolean){return v===undefined?d:v==='true'||v==='1'||v==='yes';}
-function slug(v:string){return v.toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'').slice(0,63)||'tailscale-node';}
-export function resolveConfig(env:NodeJS.ProcessEnv=process.env):ResolvedConfig { const ci=!!(env.CI||env.GITHUB_ACTIONS); const container=!!env.KUBERNETES_SERVICE_HOST||!!env.CONTAINER; const profile=(env.TS_PROFILE||(ci?'ci':container?'container':process.platform==='win32'?'windows':'dev')) as Profile; const ephemeral=bool(env.TS_EPHEMERAL,profile==='ci'||profile==='container'); return {profile,tailnet:env.TS_TAILNET||'-',hostname:slug(env.TS_HOSTNAME||os.hostname()),tags:(env.TS_TAGS||'').split(',').map(x=>x.trim()).filter(Boolean),ssh:bool(env.TS_SSH,true),keyExpiry:env.TS_KEY_EXPIRY||'max',preauthorized:bool(env.TS_PREAUTHORIZED,true),reusable:bool(env.TS_REUSABLE,!ephemeral&&(profile==='vm'||profile==='windows')),ephemeral,acceptDns:bool(env.TS_ACCEPT_DNS,true),acceptRoutes:bool(env.TS_ACCEPT_ROUTES,profile==='subnet-router'||profile==='exit-node'),cleanupAfter:Number(env.TS_CLEANUP_OFFLINE_AFTER||3600),source:{profile:env.TS_PROFILE?'TS_PROFILE':'runtime',hostname:env.TS_HOSTNAME?'TS_HOSTNAME':'os.hostname'},warnings:[],}; }
-export const runtime={node:process.version,platform:process.platform,arch:process.arch};
+
+const namedCredentialEnv = ['TS_TRUST_CREDENTIAL', 'TS_API_TRUST', 'TAILSCALE_TRUST_CREDENTIAL', 'TAILSCALE_API_TRUST'] as const;
+
+export function maskSecret(value: string): string {
+  return value.length < 10 ? '***' : `${value.slice(0, 5)}…${value.slice(-3)}`;
+}
+
+export function resolveCredential(env: NodeJS.ProcessEnv = process.env): CredentialResolution {
+  const exactTrustMatches = Object.entries(env).filter(([, value]) => value?.startsWith('tskey-client-'));
+  const explicit = env.TS_CLIENT_SECRET?.trim();
+  const named = namedCredentialEnv.find((name) => Boolean(env[name]?.trim()));
+  const selected = explicit
+    ? ['TS_CLIENT_SECRET', explicit] as const
+    : named
+      ? [named, env[named]!.trim()] as const
+      : exactTrustMatches.length === 1
+        ? [exactTrustMatches[0]![0], exactTrustMatches[0]![1]!] as const
+        : undefined;
+
+  if (exactTrustMatches.length > 1 && !explicit && !named) {
+    return { found: false, candidates: exactTrustMatches.map(([name]) => name), error: 'MULTIPLE_CREDENTIALS' };
+  }
+  if (!selected) {
+    return { found: false, candidates: exactTrustMatches.map(([name]) => name), error: 'CREDENTIAL_NOT_FOUND' };
+  }
+  return {
+    found: true,
+    source: selected[0],
+    masked: maskSecret(selected[1]),
+    candidates: exactTrustMatches.map(([name]) => name),
+  };
+}
+
+function bool(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined) return defaultValue;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
+function number(value: string | undefined, defaultValue: number): number {
+  if (value === undefined) return defaultValue;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : defaultValue;
+}
+
+function slug(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63) || 'tailscale-node';
+}
+
+function profileFromEnvironment(env: NodeJS.ProcessEnv): Profile {
+  const configured = env.TS_PROFILE as Profile | undefined;
+  if (configured) return configured;
+  if (env.CI || env.GITHUB_ACTIONS) return 'ci';
+  if (env.KUBERNETES_SERVICE_HOST || env.CONTAINER) return 'container';
+  if (process.platform === 'win32') return 'windows';
+  return 'dev';
+}
+
+export function resolveConfig(env: NodeJS.ProcessEnv = process.env): ResolvedConfig {
+  const profile = profileFromEnvironment(env);
+  const ephemeral = bool(env.TS_EPHEMERAL, profile === 'ci' || profile === 'container');
+  const tags = (env.TS_TAGS ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+  const warnings: string[] = [];
+  if (!tags.length && ['container', 'ci', 'vm'].includes(profile)) warnings.push('NO_TAGS_CONFIGURED: reusable infrastructure should normally use a tag');
+  if (env.TS_TAILNET === undefined) warnings.push('TAILNET_DEFAULTED: using tailnet "-"');
+
+  return {
+    profile,
+    tailnet: env.TS_TAILNET?.trim() || '-',
+    hostname: slug(env.TS_HOSTNAME || os.hostname()),
+    tags,
+    ssh: bool(env.TS_SSH, true),
+    keyExpiry: env.TS_KEY_EXPIRY?.trim() || 'max',
+    preauthorized: bool(env.TS_PREAUTHORIZED, true),
+    reusable: bool(env.TS_REUSABLE, !ephemeral && (profile === 'vm' || profile === 'windows')),
+    ephemeral,
+    acceptDns: bool(env.TS_ACCEPT_DNS, true),
+    acceptRoutes: bool(env.TS_ACCEPT_ROUTES, profile === 'subnet-router' || profile === 'exit-node'),
+    cleanupAfter: number(env.TS_CLEANUP_OFFLINE_AFTER, 3600),
+    source: {
+      profile: env.TS_PROFILE ? 'TS_PROFILE' : 'runtime',
+      hostname: env.TS_HOSTNAME ? 'TS_HOSTNAME' : 'os.hostname',
+      tags: env.TS_TAGS ? 'TS_TAGS' : 'default',
+    },
+    warnings,
+  };
+}
+
+export const runtime = Object.freeze({
+  node: process.version,
+  platform: process.platform,
+  arch: process.arch,
+  cwd: process.cwd(),
+});
