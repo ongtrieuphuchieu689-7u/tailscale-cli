@@ -1,6 +1,6 @@
 {
   "name": "tailsacle-cli",
-  "version": "1.260816.11604",
+  "version": "1.260816.11712",
   "private": false,
   "type": "module",
   "engines": {
@@ -41,9 +41,10 @@
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
     "clean": "rimraf dist coverage",
     "check": "npm run typecheck && npm test",
-    "prepublishOnly": "npm run check && npm run build",
+    "prepublishOnly": "npm run check && npm run build && npm run check:secrets",
+    "check:secrets": "node scripts/check-secrets.mjs",
     "smoke": "npm run build && node dist/cli.js --help && node dist/cli.js agent-manifest --json",
-    "pack:check": "npm run build && npm pack --dry-run",
+    "pack:check": "npm run build && npm run check:secrets && npm pack --dry-run",
     "version:bump": "node scripts/bump-version.mjs",
     "version:bump:verify": "node scripts/bump-version.mjs --verify",
     "deploy:secret-ongtrieuphuchieu689-7u": "ghcli .env.ongtrieuphuchieu689-7u"

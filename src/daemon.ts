@@ -1,6 +1,14 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
+import { cacheBinDir } from "./binary.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,6 +25,10 @@ async function tryRun(command: string, args: string[]): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function inspectDaemon(): Promise<DaemonState> {
@@ -40,13 +52,66 @@ export async function inspectDaemon(): Promise<DaemonState> {
   const warnings: string[] = [];
   if (!existsSync("/dev/net/tun")) {
     warnings.push(
-      "DAEMON_CLIENT: /dev/net/tun is missing, so TUN mode cannot work; use userspace networking (tailscaled --tun=userspace-networking)",
+      "DAEMON_CLIENT: /dev/net/tun is missing, so TUN mode cannot work; a userspace-networking tailscaled is the fallback",
     );
   }
   warnings.push(
-    'TAILSCALED_NOT_RUNNING: tailscaled is not running; start it with "sudo systemctl enable --now tailscaled" (or "sudo tailscaled --tun=userspace-networking" on containers/devcontainers)',
+    'TAILSCALED_NOT_RUNNING: tailscaled is not running; start it with "sudo systemctl enable --now tailscaled" (or "sudo tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock" on containers/devcontainers)',
   );
   return { running: false, warnings, actions: [] };
+}
+
+function daemonArgs(): string[] {
+  const socket =
+    process.env.TS_TAILSCALE_SOCKET ?? "/var/run/tailscale/tailscaled.sock";
+  const state =
+    process.env.TS_TAILSCALED_STATE ?? "/var/lib/tailscale/tailscaled.state";
+  return [
+    "--tun=userspace-networking",
+    `--state=${state}`,
+    `--socket=${socket}`,
+  ];
+}
+
+async function startUserspaceDaemon(): Promise<{
+  started: boolean;
+  command: string;
+}> {
+  const args = daemonArgs();
+  const socket =
+    process.env.TS_TAILSCALE_SOCKET ?? "/var/run/tailscale/tailscaled.sock";
+  const root = typeof process.getuid === "function" && process.getuid() === 0;
+  const command: string[] | undefined = root
+    ? ["tailscaled", ...args]
+    : process.env.CI
+      ? undefined
+      : ["sudo", "tailscaled", ...args];
+  if (!command)
+    return { started: false, command: `tailscaled ${args.join(" ")}` };
+  const child = spawn(command[0]!, command.slice(1), {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.on("error", () => {
+    // The daemon may exit immediately when privileges are missing.
+  });
+  child.unref();
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await sleep(500);
+    if (await tryRun("pgrep", ["-x", "tailscaled"])) {
+      const pids = await userspacePids();
+      if (pids[0])
+        writeTrackedDaemon({
+          pid: pids[0],
+          socket,
+          command: command.join(" "),
+          startedAt: new Date().toISOString(),
+        });
+      return { started: true, command: command.join(" ") };
+    }
+  }
+  return { started: false, command: command.join(" ") };
 }
 
 export async function ensureDaemon(): Promise<DaemonState> {
@@ -59,5 +124,218 @@ export async function ensureDaemon(): Promise<DaemonState> {
     actions.push("sudo systemctl enable --now tailscaled");
     return { running: true, warnings: [], actions };
   }
+
+  if (!existsSync("/dev/net/tun")) {
+    const userspace = await startUserspaceDaemon();
+    if (userspace.started) {
+      return {
+        running: true,
+        warnings: [
+          `DAEMON_USERSPACE: started a userspace-networking tailscaled (socket ${process.env.TS_TAILSCALE_SOCKET ?? "/var/run/tailscale/tailscaled.sock"}); no /dev/net/tun is required`,
+        ],
+        actions: [userspace.command],
+      };
+    }
+    if (process.env.CI)
+      return {
+        running: false,
+        warnings: [
+          ...inspected.warnings,
+          "DAEMON_USERSPACE_SKIPPED: CI detected; not auto-starting a userspace daemon. Provide tailscaled via the runner image or start it explicitly",
+        ],
+        actions,
+      };
+    return {
+      running: false,
+      warnings: [
+        ...inspected.warnings,
+        `DAEMON_USERSPACE_FAILED: could not start a userspace daemon (${userspace.command}); start it manually with the exact command above`,
+      ],
+      actions,
+    };
+  }
   return { running: false, warnings: inspected.warnings, actions };
+}
+
+export interface TrackedDaemon {
+  pid: number;
+  socket: string;
+  command: string;
+  startedAt: string;
+}
+
+function daemonPidFile(): string {
+  return join(cacheBinDir(), "daemon.pid.json");
+}
+
+export function readTrackedDaemon(): TrackedDaemon | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(daemonPidFile(), "utf8")) as Partial<
+      TrackedDaemon
+    >;
+    if (typeof parsed.pid !== "number" || !Number.isInteger(parsed.pid))
+      return undefined;
+    return {
+      pid: parsed.pid,
+      socket: String(parsed.socket ?? ""),
+      command: String(parsed.command ?? ""),
+      startedAt: String(parsed.startedAt ?? ""),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function writeTrackedDaemon(record: TrackedDaemon): void {
+  const file = daemonPidFile();
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+}
+
+function clearTrackedDaemon(pid: number): void {
+  const current = readTrackedDaemon();
+  if (current && current.pid === pid) {
+    try {
+      rmSync(daemonPidFile());
+    } catch {
+      // best-effort cleanup
+    }
+  }
+}
+
+function pidCmdline(pid: number): string | undefined {
+  if (process.platform !== "linux") return undefined;
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ");
+  } catch {
+    return undefined;
+  }
+}
+
+function isUserspaceTailscaled(pid: number): boolean {
+  const cmdline = pidCmdline(pid);
+  if (cmdline !== undefined)
+    return (
+      cmdline.includes("tailscaled") && cmdline.includes("userspace-networking")
+    );
+  return false;
+}
+
+async function userspacePids(): Promise<number[]> {
+  try {
+    const { stdout } = await execFileAsync(
+      "pgrep",
+      ["-f", "tailscaled.*--tun=userspace-networking"],
+      { timeout: 10_000, windowsHide: true },
+    );
+    return stdout
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((value) => Number(value))
+      .filter(Number.isInteger);
+  } catch {
+    return [];
+  }
+}
+
+async function isAlive(pid: number): Promise<boolean> {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function stopUserspaceDaemon(): Promise<{
+  stopped: boolean;
+  pid?: number;
+  message: string;
+}> {
+  const tracked = readTrackedDaemon();
+  if (!tracked)
+    return {
+      stopped: false,
+      message:
+        "NO_TRACKED_DAEMON: no userspace tailscaled started by this tool is tracked (tracked in the daemon pidfile)",
+    };
+  const { pid } = tracked;
+  if (!isUserspaceTailscaled(pid)) {
+    clearTrackedDaemon(pid);
+    return {
+      stopped: false,
+      pid,
+      message: `UNTRACKED_PID: pid ${pid} is not a userspace tailscaled anymore (${pidCmdline(pid) ?? "process gone"}); cleared the stale pidfile`,
+    };
+  }
+  if (!(await isAlive(pid))) {
+    clearTrackedDaemon(pid);
+    return {
+      stopped: false,
+      pid,
+      message: `ALREADY_STOPPED: pid ${pid} is not running; cleared the pidfile`,
+    };
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    return {
+      stopped: false,
+      pid,
+      message: `KILL_FAILED: could not signal pid ${pid} (${error instanceof Error ? error.message : String(error)})`,
+    };
+  }
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await sleep(500);
+    if (!(await isAlive(pid))) {
+      clearTrackedDaemon(pid);
+      return {
+        stopped: true,
+        pid,
+        message: `stopped userspace tailscaled (pid ${pid})`,
+      };
+    }
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // fall through to the alive check below
+  }
+  await sleep(500);
+  if (!(await isAlive(pid))) {
+    clearTrackedDaemon(pid);
+    return {
+      stopped: true,
+      pid,
+      message: `stopped userspace tailscaled (pid ${pid}, after SIGKILL)`,
+    };
+  }
+  return {
+    stopped: false,
+    pid,
+    message: `KILL_FAILED: pid ${pid} survived SIGTERM and SIGKILL`,
+  };
+}
+
+export async function daemonStatus(): Promise<{
+  running: boolean;
+  warnings: string[];
+  actions: string[];
+  tracked?: TrackedDaemon;
+  trackedAlive: boolean;
+}> {
+  const inspected = await inspectDaemon();
+  const tracked = readTrackedDaemon();
+  let trackedAlive = false;
+  if (tracked)
+    trackedAlive =
+      isUserspaceTailscaled(tracked.pid) && (await isAlive(tracked.pid));
+  const base = {
+    running: inspected.running,
+    warnings: inspected.warnings,
+    actions: inspected.actions,
+    trackedAlive,
+  };
+  return tracked ? { ...base, tracked } : base;
 }

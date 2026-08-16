@@ -1,5 +1,38 @@
-import { describe, expect, it } from "vitest";
-import { ApiError, sanitizeServerText } from "../src/api.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  ApiError,
+  sanitizeServerText,
+  TailscaleApiClient,
+} from "../src/api.js";
+import type { ResolvedConfig } from "../src/types.js";
+
+const testConfig: ResolvedConfig = {
+  profile: "dev",
+  tailnet: "-",
+  hostname: "node-a",
+  tags: [],
+  ssh: true,
+  keyExpiry: "max",
+  preauthorized: true,
+  reusable: false,
+  ephemeral: false,
+  acceptDns: true,
+  acceptRoutes: false,
+  cleanupAfter: 3600,
+  source: {},
+  warnings: [],
+};
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 describe("ApiError retry semantics", () => {
   it("treats permission and scope failures as non-retryable", () => {
@@ -36,5 +69,51 @@ describe("sanitizeServerText", () => {
   it("leaves ordinary text untouched", () => {
     const normal = "policy has invalid tagOwners entry";
     expect(sanitizeServerText(normal)).toBe(normal);
+  });
+});
+
+describe("MagicDNS preferences contract", () => {
+  it("posts the camelCase magicDNS field and verifies read-after-write", async () => {
+    const requests: { url: string; method: string; body?: string }[] = [];
+    const fetcher = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = requests.length === 0 ? "POST" : "GET";
+        const body = init?.body?.toString();
+        requests.push({ url, method, ...(body !== undefined ? { body } : {}) });
+        if (method === "POST") return jsonResponse({ magicDNS: true });
+        return jsonResponse({ magicDNS: true });
+      },
+    );
+    vi.stubGlobal("fetch", fetcher);
+
+    const client = new TailscaleApiClient(testConfig, {
+      TS_API_KEY: "tskey-api-key-value",
+    });
+    await client.enableMagicDns();
+
+    expect(requests[0]?.method).toBe("POST");
+    expect(requests[0]?.url).toContain("/tailnet/-/dns/preferences");
+    expect(requests[0]?.body).toBe('{"magicDNS":true}');
+    expect(requests[1]?.method).toBe("GET");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws DNS_VERIFY_FAILED when the read-back does not reflect MagicDNS", async () => {
+    let requestsSeen = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const method = requestsSeen++ === 0 ? "POST" : "GET";
+        return method === "POST"
+          ? jsonResponse({ magicDNS: true })
+          : jsonResponse({ magicDNS: false });
+      }),
+    );
+
+    const client = new TailscaleApiClient(testConfig, {
+      TS_API_KEY: "tskey-api-key-value",
+    });
+    await expect(client.enableMagicDns()).rejects.toThrow("DNS_VERIFY_FAILED");
   });
 });

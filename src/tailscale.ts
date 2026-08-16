@@ -113,7 +113,11 @@ export class TailscaleLocal {
     args: string[],
     options: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
   ): Promise<LocalCommandResult> {
-    const { stdout, stderr } = await execFileAsync(this.bin, args, {
+    const socket =
+      options.env?.TS_TAILSCALE_SOCKET?.trim() ??
+      process.env.TS_TAILSCALE_SOCKET?.trim();
+    const commandArgs = socket ? [`--socket=${socket}`, ...args] : args;
+    const { stdout, stderr } = await execFileAsync(this.bin, commandArgs, {
       timeout: options.timeoutMs ?? 60_000,
       windowsHide: true,
       env: { ...process.env, ...options.env },
@@ -134,7 +138,19 @@ export class TailscaleLocal {
   }
 
   async status<T = Record<string, unknown>>(): Promise<T> {
-    return this.runJson<T>(["status"]);
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.runJson<T>(["status"]);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/failed to connect to local tailscaled/i.test(message))
+          throw error;
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+      }
+    }
+    throw lastError;
   }
 
   async up(args: string[], env: NodeJS.ProcessEnv): Promise<void> {

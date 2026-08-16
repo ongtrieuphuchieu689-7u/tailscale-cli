@@ -2,7 +2,7 @@
 
 ## First run
 
-Run `tailsacle-cli doctor --detect-credentials --json` first. The command does not modify the tailnet or local Tailscale state.
+Run `tailsacle-cli doctor --detect-credentials --json` first. The command does not modify the tailnet or local Tailscale state; `doctor --deep` additionally runs read-only API probes (credentials, `devices:core`/`policy_file`/`dns`/`all` scopes, HTTPS, MagicDNS, funnel attribute readiness, daemon, root) with no side effects.
 
 Running `tailsacle-cli` with no arguments in a TTY opens the interactive menu (profile, target/port, policy action, binary update) and prints the equivalent non-interactive command before executing it.
 
@@ -11,11 +11,14 @@ Running `tailsacle-cli` with no arguments in a TTY opens the interactive menu (p
 `deploy` resolves the runtime profile, uses an existing `TS_AUTH_KEY` or creates an auth key through the Tailscale API (auto-detecting an OAuth trust credential in any `tskey-client-…` env var, or the one named by `--credential-env`), runs `tailscale up`, verifies a Running backend, and can configure Serve/Funnel exposures.
 
 - `--dry-run` inspects the resolved deployment plan without joining the tailnet.
-- `--apply-policy` allows HuJSON-preserving `tagOwners` provisioning (never with plain `--yes` alone).
-- `--enable-https` allows enabling tailnet-wide HTTPS for Funnel exposures.
-- `--cleanup` prunes exact-match offline devices for the deployment at the end (ci/container profiles; disable with `TS_NO_CLEANUP=1`).
+- `--apply-policy` allows HuJSON-preserving `tagOwners`/`nodeAttrs` provisioning (never with plain `--yes` alone).
+- `--enable-https` allows enabling tailnet-wide HTTPS for Funnel exposures (HTTPS is never enabled implicitly).
+- `--key-expiry <value>` overrides the auth-key lifetime for this run (`max`/`unlimited` map to the documented 90-day ceiling; seconds are passed through verbatim).
+- `--tag-owner <owner...>` sets the owner(s) for auto-provisioned `tagOwners`; mixed-owner policies without it fail with `POLICY_TAG_OWNER_REQUIRED` instead of guessing.
+- `--cleanup` prunes exact-match offline devices for the deployment at the end on **any** profile (without the flag, no cleanup runs anywhere; `TS_NO_CLEANUP=1` still disables it).
+- With `deploy --funnel`, the funnel node attribute is verified **before** the local `funnel` command runs: auto-provisioned when `--apply-policy` is present, otherwise the deploy fails fast with `FUNNEL_ATTR_REQUIRED`.
 - When `TS_TAGS` is unset and the profile is not `dev`, a deterministic tag is used: `TS_TAG_BASE`, else the CI repository path, else `tailsacle-cli`/hostname.
-- Missing Tailscale binaries are auto-downloaded (SHA256-verified) into the cache; `update-bin` downloads the latest stable build there and never overwrites package-managed binaries.
+- Missing Tailscale binaries are auto-downloaded (SHA256-verified) into the cache; `update-bin` downloads the latest stable build there and never overwrites package-managed binaries. On Windows the MSI is downloaded, checksummed and installed silently when running as Administrator (otherwise the exact `msiexec /i … /qn` command is returned).
 
 ## Guarded operations
 
@@ -26,6 +29,14 @@ Policy writes require a fetched remote policy, diff, remote validation, local ba
 - `funnel` refuses ephemeral nodes (they never publish public DNS), auto-detects the target from `$PORT`, supports `--tcp <public:local>` and repeatable `--expose 443=3000 --expose 443/api=3001`, and verifies the public A record (dns.google + getent) up to `--verify-timeout` (default 120s) before reporting the public URL.
 - `dns --enable-magicdns --yes` enables MagicDNS on the tailnet; plain `dns` reads nameservers/preferences/search paths.
 - Custom `TS_TAILNET` domains (not `*.ts.net`) emit a warning because Funnel DNS and HTTPS rely on a Tailscale-hosted domain.
+
+## Daemon lifecycle
+
+`daemon status` reports the local tailscaled state and any userspace daemon this tool started (tracked via a pidfile in the binary cache). `daemon stop` sends SIGTERM (then SIGKILL) to a tracked userspace tailscaled process; it will not stop system-managed daemons.
+
+- The socket path defaults to `TS_TAILSCALE_SOCKET` or `/var/run/tailscale/tailscaled.sock`.
+- When running as root, the daemon is started directly; otherwise a `sudo` invocation is attempted with a clear warning when it fails.
+- The pidfile is only written when the CLI itself spawns the daemon; existing tailscaled instances started by systemd or manual commands are not tracked.
 
 ## Automation
 

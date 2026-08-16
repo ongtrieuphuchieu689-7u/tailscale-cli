@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   chmod,
   mkdir,
+  open,
   readFile,
   readdir,
   rename,
@@ -170,6 +171,16 @@ export async function downloadStable(
   const info = await latestStableInfo();
   const dir = cacheBinDir();
   await mkdir(dir, { recursive: true });
+  return withDownloadLock("linux-tgz", () =>
+    downloadStableLocked(info, options),
+  );
+}
+
+async function downloadStableLocked(
+  info: Omit<BinaryDownloadInfo, "cachedPath">,
+  options: { skipChecksum?: boolean },
+): Promise<BinaryDownloadInfo> {
+  const dir = cacheBinDir();
   const tmpDir = await new Promise<string>((resolvePromise) => {
     const p = join(dir, `.tmp-${process.pid}-${Date.now()}`);
     resolvePromise(p);
@@ -266,15 +277,162 @@ export async function updateCacheBinary(
   };
 }
 
+async function withDownloadLock<T>(
+  label: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const dir = cacheBinDir();
+  await mkdir(dir, { recursive: true });
+  const lockPath = join(dir, ".download.lock");
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      const handle = await open(lockPath, "wx");
+      await handle.close();
+      try {
+        await writeFile(lockPath, `${process.pid}\n${label}`);
+        return await fn();
+      } finally {
+        await rm(lockPath, { force: true });
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      await sleep(250);
+    }
+  }
+  throw new Error(
+    `BIN_LOCKED: another download (${label}) is already in progress in ${dir}`,
+  );
+}
+
+export interface WindowsInstallResult {
+  version: string;
+  msi: string;
+  sha256: string;
+  url: string;
+  sha256Url: string;
+  arch: string;
+  cachedPath: string;
+  installed: boolean;
+}
+
+export async function latestWindowsInstallInfo(): Promise<WindowsInstallResult> {
+  const index = JSON.parse(await fetchText(STABLE_INDEX_URL)) as {
+    Version?: string;
+    MSIs?: Record<string, string>;
+  };
+  const version = index.Version;
+  let arch = detectArch();
+  if (arch === "386") arch = "x86";
+  const msi = index.MSIs?.[arch];
+  if (!version || !msi)
+    throw new Error(
+      "BIN_INDEX_INCOMPLETE: could not determine the latest stable Windows MSI",
+    );
+  const sha256Url = `${STABLE_BASE}/${msi}.sha256`;
+  const sha256Raw = (await fetchText(sha256Url)).trim().split(/\s+/)[0];
+  if (!sha256Raw || !/^[0-9a-f]{64}$/i.test(sha256Raw))
+    throw new Error(
+      "BIN_SHA256_INVALID: checksum file did not contain a valid SHA256",
+    );
+  return {
+    version,
+    msi,
+    sha256: sha256Raw,
+    url: `${STABLE_BASE}/${msi}`,
+    sha256Url,
+    arch,
+    cachedPath: join(cacheBinDir(), msi),
+    installed: false,
+  };
+}
+
+async function isWindowsAdmin(): Promise<boolean> {
+  try {
+    await execFileAsync("net", ["session"], {
+      timeout: 10_000,
+      windowsHide: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function installWindowsMsi(
+  options: { skipChecksum?: boolean } = {},
+): Promise<WindowsInstallResult> {
+  const info = await latestWindowsInstallInfo();
+  const cachedPath = join(cacheBinDir(), info.msi);
+  await withDownloadLock("windows-msi", async () => {
+    if (existsSync(cachedPath)) {
+      if (options.skipChecksum) return;
+      const cached = await sha256sum(cachedPath);
+      if (cached.toLowerCase() === info.sha256.toLowerCase()) return;
+      await rm(cachedPath, { force: true });
+    }
+    const tmp = join(cacheBinDir(), `.tmp-${process.pid}-${Date.now()}.msi`);
+    try {
+      await downloadFile(info.url, tmp);
+      if (!options.skipChecksum) {
+        const actual = await sha256sum(tmp);
+        if (actual.toLowerCase() !== info.sha256.toLowerCase())
+          throw new Error(
+            `BIN_CHECKSUM_MISMATCH: expected ${info.sha256} got ${actual}`,
+          );
+      }
+      await rename(tmp, cachedPath);
+    } catch (error) {
+      await rm(tmp, { force: true });
+      throw error;
+    }
+  });
+  if (!(await isWindowsAdmin()))
+    throw new Error(
+      `BIN_WINDOWS_ADMIN_REQUIRED: run this from an Administrator shell or install the MSI manually: msiexec /i "${cachedPath}" /qn`,
+    );
+  await execFileAsync("msiexec", ["/i", cachedPath, "/qn", "/norestart"], {
+    timeout: 300_000,
+    windowsHide: true,
+  });
+  return { ...info, cachedPath, installed: true };
+}
+
+async function windowsInstalledBinaryPath(): Promise<string | undefined> {
+  const candidates = [
+    resolve(
+      process.env.ProgramFiles ?? "C:\\Program Files",
+      "Tailscale",
+      "tailscale.exe",
+    ),
+    resolve(
+      process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
+      "Tailscale",
+      "tailscale.exe",
+    ),
+  ];
+  for (const candidate of candidates) {
+    if (await runVersion(candidate)) return candidate;
+  }
+  return undefined;
+}
+
 export async function ensureBinary(): Promise<{
   path: string;
   version: string;
-  source: "cache" | "download";
+  source: "cache" | "download" | "windows-msi";
 }> {
   if (process.platform === "win32") {
-    throw new Error(
-      "BIN_WINDOWS_MANUAL: install Tailscale with the MSI installer (Administrator) or set TS_TAILSCALE_BIN",
-    );
+    await installWindowsMsi();
+    const path = await windowsInstalledBinaryPath();
+    if (!path)
+      throw new Error(
+        "TAILSCALE_BINARY_FAILED: the MSI installed but tailscale.exe was not found",
+      );
+    return {
+      path,
+      version: (await runVersion(path)) ?? "unknown",
+      source: "windows-msi",
+    };
   }
   await downloadStable();
   const version = await runVersion(cacheBinPath());

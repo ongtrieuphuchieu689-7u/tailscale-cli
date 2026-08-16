@@ -437,9 +437,20 @@ export class TailscaleApiClient {
   async enableMagicDns(): Promise<void> {
     await this.request<unknown>(
       `/tailnet/${this.tailnet()}/dns/preferences`,
-      { method: "POST", body: JSON.stringify({ MagicDNSEnabled: true }) },
+      { method: "POST", body: JSON.stringify({ magicDNS: true }) },
       ["dns"],
     );
+    const { data } = await this.request<{ magicDNS?: boolean }>(
+      `/tailnet/${this.tailnet()}/dns/preferences`,
+      {},
+      ["dns:read"],
+    );
+    if (data?.magicDNS !== true)
+      throw new ApiError(
+        "DNS_VERIFY_FAILED: MagicDNS is not reflected on the tailnet after the update",
+        502,
+        "DNS_VERIFY_FAILED",
+      );
   }
 
   async getTailnetSettings(): Promise<{ httpsEnabled?: boolean }> {
@@ -464,7 +475,7 @@ export function apiCredentialHint(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const hasCredential = Boolean(
-    envFirst("TS_API_KEY", "TS_ACCESS_TOKEN") ||
+    envFirst("TS_API_KEY", "TS_ACCESS_TOKEN", "TS_API_TOKEN") ||
     env.TS_CLIENT_SECRET?.trim() ||
     (env.TS_OAUTH_CLIENT_ID && env.TS_OAUTH_CLIENT_SECRET) ||
     (env.TS_CLIENT_ID && env.TS_CLIENT_SECRET),

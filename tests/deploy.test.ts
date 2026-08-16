@@ -1,9 +1,141 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   resolveKeyExpiry,
   parseExposure,
   resolveExposures,
+  ensureFunnelReadiness,
 } from "../src/deploy.js";
+import { funnelCovered } from "../src/policy.js";
+import type { ResolvedConfig } from "../src/types.js";
+
+const readinessConfig: ResolvedConfig = {
+  profile: "funnel-app",
+  tailnet: "-",
+  hostname: "node-a",
+  tags: ["web"],
+  ssh: true,
+  keyExpiry: "max",
+  preauthorized: true,
+  reusable: true,
+  ephemeral: false,
+  acceptDns: true,
+  acceptRoutes: false,
+  cleanupAfter: 3600,
+  source: {},
+  warnings: [],
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  const headers = new Headers({ "content-type": "application/json" });
+  if (body && typeof body === "object") headers.set("etag", '"e1"');
+  return new Response(JSON.stringify(body), { status, headers });
+}
+
+describe("deploy funnel readiness pre-check (item A)", () => {
+  it("refuses to run funnel when the attribute is missing and --apply-policy is absent", async () => {
+    vi.stubEnv("TS_API_KEY", "tskey-api-test-key");
+    vi.stubEnv("TS_CLIENT_SECRET", "");
+    const fetcher = vi.fn(async (_input: RequestInfo | URL) =>
+      jsonResponse({ nodeAttrs: [] }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      await expect(
+        ensureFunnelReadiness(readinessConfig, ["web"], {
+          yes: true,
+          applyPolicy: false,
+        }),
+      ).rejects.toThrow("FUNNEL_ATTR_REQUIRED");
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("auto-provisions the funnel attribute before funnel runs when --apply-policy is passed", async () => {
+    vi.stubEnv("TS_API_KEY", "tskey-api-test-key");
+    vi.stubEnv("TS_CLIENT_SECRET", "");
+    const basePolicy = { nodeAttrs: [] };
+    const provisionedPolicy = {
+      nodeAttrs: [{ target: ["tag:web"], attr: ["funnel"] }],
+    };
+    const calls = vi
+      .fn()
+      .mockReturnValueOnce(jsonResponse(basePolicy))
+      .mockReturnValueOnce(jsonResponse(basePolicy))
+      .mockReturnValueOnce(
+        new Response('{\n  "nodeAttrs": []\n}', {
+          status: 200,
+          headers: { "content-type": "application/hujson", etag: '"e2"' },
+        }),
+      )
+      .mockReturnValueOnce(jsonResponse({}))
+      .mockReturnValueOnce(jsonResponse(provisionedPolicy))
+      .mockReturnValueOnce(jsonResponse(provisionedPolicy));
+    const fetcher = vi.fn(async (_input: RequestInfo | URL) => calls());
+    vi.stubGlobal("fetch", fetcher);
+
+    const workDir = mkdtempSync(join(tmpdir(), "tscli-policy-"));
+    const previousCwd = process.cwd();
+    process.chdir(workDir);
+    try {
+      const warnings = await ensureFunnelReadiness(readinessConfig, ["web"], {
+        yes: true,
+        applyPolicy: true,
+      });
+      expect(warnings.join("\n")).toContain("PROVISIONED_FUNNEL");
+      expect(fetcher.mock.calls.length).toBe(6);
+
+      const backs = readdirSync(workDir).filter((name) =>
+        name.startsWith("policy.provision-"),
+      );
+      expect(backs.length).toBe(1);
+      const backupContent = readFileSync(join(workDir, backs[0]!), "utf8");
+      expect(backupContent).toBe('{\n  "nodeAttrs": []\n}');
+      expect(backupContent).not.toContain("funnel");
+      expect(warnings.join("\n")).toContain(
+        `POLICY_BACKUP: pre-write policy saved to ${backs[0]}`,
+      );
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(workDir, { recursive: true, force: true });
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("warns FUNNEL_ATTR_UNVERIFIABLE without a policy read scope and lets funnel proceed", async () => {
+    vi.stubEnv("TS_API_KEY", "tskey-api-test-key");
+    vi.stubEnv("TS_CLIENT_SECRET", "");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (_input: RequestInfo | URL) =>
+          new Response(
+            JSON.stringify({ message: "scope denied: policy_file:read" }),
+            {
+              status: 403,
+              headers: { "content-type": "application/json" },
+            },
+          ),
+      ),
+    );
+    try {
+      const warnings = await ensureFunnelReadiness(readinessConfig, ["web"], {
+        yes: true,
+        applyPolicy: true,
+      });
+      expect(warnings.join("\n")).toContain("FUNNEL_ATTR_UNVERIFIABLE");
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+});
 
 describe("key expiry resolution", () => {
   it("defaults to the server max lifetime", () => {
@@ -11,13 +143,51 @@ describe("key expiry resolution", () => {
     expect(resolveKeyExpiry("")).toBe(90 * 24 * 60 * 60);
   });
 
+  it("treats unlimited as the documented 90-day ceiling", () => {
+    expect(resolveKeyExpiry("unlimited")).toBe(90 * 24 * 60 * 60);
+    expect(resolveKeyExpiry("UNLIMITED")).toBe(90 * 24 * 60 * 60);
+  });
+
   it("accepts explicit seconds", () => {
     expect(resolveKeyExpiry("3600")).toBe(3600);
+    expect(resolveKeyExpiry("90")).toBe(90);
   });
 
   it("rejects invalid values", () => {
     expect(() => resolveKeyExpiry("soon")).toThrow("KEY_EXPIRY_INVALID");
     expect(() => resolveKeyExpiry("-5")).toThrow("KEY_EXPIRY_INVALID");
+    expect(() => resolveKeyExpiry("0")).toThrow("KEY_EXPIRY_INVALID");
+    expect(() => resolveKeyExpiry("1.5x")).toThrow("KEY_EXPIRY_INVALID");
+  });
+});
+
+describe("funnel attribute coverage", () => {
+  const policy = {
+    nodeAttrs: [
+      { target: ["tag:web"], attr: ["funnel"] },
+      { target: ["tag:ops"], attr: ["another"] },
+    ],
+  };
+
+  it("reports covered when every requested tag has the funnel attribute", () => {
+    expect(funnelCovered(policy, ["web"])).toBe(true);
+  });
+
+  it("reports missing when any requested tag lacks the attribute", () => {
+    expect(funnelCovered(policy, ["web", "ops"])).toBe(false);
+    expect(funnelCovered(policy, ["unlisted"])).toBe(false);
+  });
+
+  it("falls back to autogroup:member for untagged nodes", () => {
+    expect(funnelCovered(policy, [])).toBe(false);
+    expect(
+      funnelCovered(
+        {
+          nodeAttrs: [{ target: ["autogroup:member"], attr: ["funnel"] }],
+        },
+        [],
+      ),
+    ).toBe(true);
   });
 });
 

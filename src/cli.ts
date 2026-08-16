@@ -9,6 +9,7 @@ import { cleanup } from "./cleanup.js";
 import {
   credentialEnvName,
   maskSecret,
+  resolveAuth,
   resolveConfig,
   resolveCredential,
   runtime,
@@ -19,15 +20,22 @@ import {
   tailscaleVersion,
   TailscaleLocal,
 } from "./tailscale.js";
-import { latestStableInfo, updateCacheBinary } from "./binary.js";
-import { ensureDaemon } from "./daemon.js";
+import {
+  installWindowsMsi,
+  latestStableInfo,
+  latestWindowsInstallInfo,
+  updateCacheBinary,
+} from "./binary.js";
+import { ensureDaemon, inspectDaemon, daemonStatus, stopUserspaceDaemon } from "./daemon.js";
 import { manifest } from "./manifest.js";
 import {
   ensureFunnelAccess,
   ensureHttpsEnabled,
+  funnelCovered,
   policyFromEnv,
   policySync,
 } from "./policy.js";
+import type { ResolvedConfig } from "./types.js";
 import { confirm } from "./interactive.js";
 import type { Envelope } from "./types.js";
 
@@ -128,6 +136,15 @@ function resolvedCredentialEnv(): string | undefined {
   return credentialEnvName();
 }
 
+function envTagOwner(): string[] | undefined {
+  const value = process.env.TS_TAG_OWNER?.trim();
+  if (!value) return undefined;
+  return value
+    .split(",")
+    .map((owner) => owner.trim())
+    .filter(Boolean);
+}
+
 function emit<T>(
   command: string,
   resolved: T,
@@ -207,7 +224,7 @@ function exitCodeFor(error: unknown): number {
   return 1;
 }
 
-function doctorCredential(): ReturnType<typeof resolveCredential> {
+function credentialFromOptions(): ReturnType<typeof resolveCredential> {
   const opts = program.opts<CliOptions>();
   if (!opts.credentialEnv) return resolveCredential();
   const value = process.env[opts.credentialEnv]?.trim();
@@ -231,6 +248,103 @@ function doctorCredential(): ReturnType<typeof resolveCredential> {
   };
 }
 
+function authFromOptions(): ReturnType<typeof resolveAuth> {
+  const opts = program.opts<CliOptions>();
+  if (!opts.credentialEnv) return resolveAuth(configEnv());
+  const value = process.env[opts.credentialEnv]?.trim();
+  if (!value)
+    return {
+      found: false,
+      candidates: [opts.credentialEnv],
+      error: "CREDENTIAL_ENV_MISSING",
+    };
+  if (!value.startsWith("tskey-client-"))
+    return {
+      found: false,
+      candidates: [opts.credentialEnv],
+      error: "CREDENTIAL_FORMAT_UNSUPPORTED",
+    };
+  return {
+    found: true,
+    auth: {
+      kind: "oauth-trust",
+      source: opts.credentialEnv,
+      masked: maskSecret(value),
+    },
+    candidates: [],
+  };
+}
+
+async function probeScope(
+  fn: () => Promise<unknown>,
+): Promise<"ok" | "missing-scope" | "error"> {
+  try {
+    await fn();
+    return "ok";
+  } catch (error) {
+    if (error instanceof ApiError && [401, 403].includes(error.status))
+      return "missing-scope";
+    return "error";
+  }
+}
+
+async function deepDoctor(
+  config: ResolvedConfig,
+  options: { credentialEnvName?: string },
+): Promise<{
+  scopes: Record<string, string>;
+  httpsEnabled?: boolean;
+  funnelReady?: boolean;
+  magicDNS?: boolean;
+  daemon: { running: boolean; actions: string[] };
+  isRoot: boolean;
+}> {
+  const api = new TailscaleApiClient(
+    config,
+    process.env,
+    options.credentialEnvName,
+  );
+  const beacon: Record<string, string> = {};
+  if (!api.hasCredentials()) beacon.error = "CREDENTIAL_NOT_FOUND";
+  const result: {
+    scopes: Record<string, string>;
+    httpsEnabled?: boolean;
+    funnelReady?: boolean;
+    magicDNS?: boolean;
+    daemon: { running: boolean; actions: string[] };
+    isRoot: boolean;
+  } = {
+    scopes: beacon,
+    daemon: await inspectDaemon(),
+    isRoot:
+      typeof process.getuid === "function" ? process.getuid() === 0 : false,
+  };
+  if (!api.hasCredentials()) return result;
+
+  result.scopes.devicesCore = await probeScope(() => api.listDevices());
+  result.scopes.policyFile = await probeScope(() => api.getPolicy());
+  const dnsScope = await probeScope(async () => {
+    const dns = await api.getDns();
+    const preferences = dns.preferences as { magicDNS?: boolean } | undefined;
+    result.magicDNS = preferences?.magicDNS === true;
+  });
+  result.scopes.dns = dnsScope;
+  result.scopes.all = await probeScope(async () => {
+    const settings = await api.getTailnetSettings();
+    if (settings.httpsEnabled !== undefined)
+      result.httpsEnabled = settings.httpsEnabled;
+  });
+  if (result.scopes.policyFile === "ok") {
+    try {
+      const policy = await api.getPolicy();
+      result.funnelReady = funnelCovered(policy.json, config.tags);
+    } catch {
+      // funnelReady stays undefined when the read fails.
+    }
+  }
+  return result;
+}
+
 program
   .command("doctor")
   .description(
@@ -238,11 +352,13 @@ program
   )
   .option("--detect-credentials")
   .option("--show-resolution")
-  .action(async () => {
+  .option("--deep", "run read-only API capability probes (no side effects)")
+  .action(async (options: { deep?: boolean }) => {
     const start = performance.now();
     try {
       const config = resolveConfig(configEnv());
-      const credential = doctorCredential();
+      const credential = credentialFromOptions();
+      const auth = authFromOptions();
       let binary: unknown = { found: false };
       try {
         binary = await tailscaleVersion(undefined, { download: false });
@@ -253,9 +369,9 @@ program
         };
       }
       const warnings = [...config.warnings];
-      if (!credential.found)
+      if (!auth.found)
         warnings.push(
-          credential.error === "MULTIPLE_CREDENTIALS"
+          auth.error === "MULTIPLE_CREDENTIALS"
             ? "CREDENTIAL_AMBIGUOUS: choose a credential explicitly with --credential-env"
             : "CREDENTIAL_NOT_FOUND",
         );
@@ -263,14 +379,44 @@ program
         warnings.push(
           "API_CREDENTIAL_NOT_CONFIGURED: deploy can still use TS_AUTH_KEY",
         );
+      let deep: Record<string, unknown> | undefined;
+      if (options.deep) {
+        const credentialEnv = resolvedCredentialEnv();
+        deep = await deepDoctor(config, {
+          ...(credentialEnv ? { credentialEnvName: credentialEnv } : {}),
+        });
+        const scopes = deep.scopes as Record<string, string>;
+        if (deep.httpsEnabled === false)
+          warnings.push(
+            "HTTPS_DISABLED: tailnet HTTPS is disabled; Funnel/Serve will not work until it is enabled",
+          );
+        if (deep.funnelReady === false)
+          warnings.push(
+            "FUNNEL_ATTR_MISSING: the funnel node attribute is not set for the deployment tags; run a funnel flow with --apply-policy",
+          );
+        if (scopes.devicesCore === "missing-scope")
+          warnings.push("API_SCOPE_MISSING: devices:core scope is not granted");
+        if (scopes.policyFile === "missing-scope")
+          warnings.push(
+            "API_SCOPE_MISSING: policy_file scope is not granted (funnel/tag provisioning will fail)",
+          );
+        if (scopes.dns === "missing-scope")
+          warnings.push("API_SCOPE_MISSING: dns scope is not granted");
+        if (scopes.all === "missing-scope")
+          warnings.push(
+            "API_SCOPE_MISSING: all scope is not granted (tailnet HTTPS cannot be enabled)",
+          );
+      }
       emit(
         "doctor",
         {
           config,
           credential,
+          auth,
           apiCredential: apiCredentialHint(),
           binary,
           runtime,
+          ...(deep ? { deep } : {}),
         },
         warnings,
         [],
@@ -293,6 +439,14 @@ program
   .option("--enable-https")
   .option("--cleanup")
   .option("--bin <path>")
+  .option(
+    "--key-expiry <value>",
+    "auth-key expiry: max (documented 90-day ceiling), unlimited, or seconds",
+  )
+  .option(
+    "--tag-owner <owner...>",
+    "owner(s) for auto-provisioned tagOwners (otherwise derived from a single existing owner set)",
+  )
   .action(
     async (options: {
       dryRun?: boolean;
@@ -303,11 +457,15 @@ program
       enableHttps?: boolean;
       cleanup?: boolean;
       bin?: string;
+      keyExpiry?: string;
+      tagOwner?: string[];
     }) => {
       const start = performance.now();
       try {
-        const config = resolveConfig(configEnv());
+        if (options.keyExpiry) process.env.TS_KEY_EXPIRY = options.keyExpiry;
         const credentialEnv = resolvedCredentialEnv();
+        const tagOwner = options.tagOwner ?? envTagOwner();
+        const config = resolveConfig(configEnv());
         const result = await deployCommand(config, {
           dryRun: Boolean(options.dryRun),
           yes: Boolean(options.yes),
@@ -317,6 +475,7 @@ program
           enableHttps: Boolean(options.enableHttps),
           cleanup: Boolean(options.cleanup),
           ...(options.bin ? { bin: options.bin } : {}),
+          ...(tagOwner?.length ? { tagOwner } : {}),
           ...(credentialEnv ? { credentialEnvName: credentialEnv } : {}),
         });
         emit(
@@ -349,16 +508,28 @@ program
   .option("--yes")
   .option("--apply-policy")
   .option("--cleanup")
+  .option(
+    "--key-expiry <value>",
+    "auth-key expiry: max (documented 90-day ceiling), unlimited, or seconds",
+  )
+  .option(
+    "--tag-owner <owner...>",
+    "owner(s) for auto-provisioned tagOwners (otherwise derived from a single existing owner set)",
+  )
   .action(
     async (options: {
       dryRun?: boolean;
       yes?: boolean;
       applyPolicy?: boolean;
       cleanup?: boolean;
+      keyExpiry?: string;
+      tagOwner?: string[];
     }) => {
       const start = performance.now();
       try {
+        if (options.keyExpiry) process.env.TS_KEY_EXPIRY = options.keyExpiry;
         const credentialEnv = resolvedCredentialEnv();
+        const tagOwner = options.tagOwner ?? envTagOwner();
         const result = await deployCommand(resolveConfig(configEnv()), {
           dryRun: Boolean(options.dryRun),
           yes: Boolean(options.yes),
@@ -366,6 +537,7 @@ program
           funnel: false,
           applyPolicy: Boolean(options.applyPolicy),
           cleanup: Boolean(options.cleanup),
+          ...(tagOwner?.length ? { tagOwner } : {}),
           ...(credentialEnv ? { credentialEnvName: credentialEnv } : {}),
         });
         emit(
@@ -436,15 +608,13 @@ program
             "BIN_TRACK_UNSUPPORTED: only the stable track is supported",
           );
         if (process.platform === "win32") {
-          const bin = await findTailscale();
-          const local = new TailscaleLocal(bin);
-          const before = await tailscaleVersion(bin);
           if (options.dryRun) {
+            const info = await latestWindowsInstallInfo();
             emit(
               "update-bin",
-              { before, dryRun: true },
+              { latest: info.version, msi: info.msi, dryRun: true },
               [
-                "WINDOWS_NATIVE_UPDATER: using the installed Tailscale updater because portable binaries are not supported",
+                "WINDOWS_MSI_BOOTSTRAP: the package downloads and silently installs the MSI; an Administrator shell is required",
               ],
               [],
               [],
@@ -452,14 +622,28 @@ program
             );
             return;
           }
-          await local.update(Boolean(options.yes));
-          const after = await tailscaleVersion(bin);
+          const result = await installWindowsMsi({
+            ...(options.skipChecksum ? { skipChecksum: true } : {}),
+          });
+          const warnings = [
+            ...(options.skipChecksum
+              ? [
+                  "BIN_CHECKSUM_SKIPPED: --skip-checksum disables the MSI download integrity check",
+                ]
+              : []),
+            "WINDOWS_MSI_INSTALLED: Tailscale MSI installed silently",
+          ];
           emit(
             "update-bin",
-            { before, after },
-            ["WINDOWS_NATIVE_UPDATER: fallback path"],
-            ["update Tailscale client"],
-            [],
+            {
+              installed: true,
+              version: result.version,
+              msi: result.msi,
+              cachedPath: result.cachedPath,
+            },
+            warnings,
+            ["download Tailscale MSI", "install Tailscale MSI silently"],
+            ["windows administrator"],
             start,
           );
           return;
@@ -483,7 +667,11 @@ program
         emit(
           "update-bin",
           result,
-          [],
+          options.skipChecksum
+            ? [
+                "BIN_CHECKSUM_SKIPPED: --skip-checksum disables the download integrity check",
+              ]
+            : [],
           ["download Tailscale client into cache", "update cache binary"],
           [],
           start,
@@ -496,6 +684,30 @@ program
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function funnelDnsName(
+  local: TailscaleLocal,
+): Promise<string | undefined> {
+  try {
+    const statusJson = await local.runJson<{ Name?: string }>([
+      "funnel",
+      "status",
+    ]);
+    if (typeof statusJson?.Name === "string")
+      return statusJson.Name.replace(/\.$/, "");
+  } catch {
+    // status unavailable; fall back to local status.
+  }
+  try {
+    const statusJson = await local.runJson<{ Self?: { DNSName?: string } }>([
+      "status",
+    ]);
+    const dns = statusJson?.Self?.DNSName;
+    return dns ? dns.replace(/\.$/, "") : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function funnelPublicDnsPropagated(
@@ -624,6 +836,9 @@ program
         .filter(Boolean)
         .map(parseFunnelExpose);
       let resolvedTarget = target;
+      const verifySeconds = options.verifyTimeout
+        ? Number(options.verifyTimeout)
+        : 120;
       if (options.tcp) {
         const [publicPort, localPort] = options.tcp
           .replace(/\s/g, "")
@@ -637,17 +852,34 @@ program
           `--tcp=${publicPort}`,
           `tcp://127.0.0.1:${localPort}`,
         ]);
+        const name = await funnelDnsName(local);
+        const verify = name
+          ? await funnelPublicDnsPropagated(name, verifySeconds)
+          : { ok: false as const, attempts: 0 };
+        if (!verify.ok)
+          throw new Error(
+            `FUNNEL_DNS_NOT_PUBLISHED: no public DNS record for ${name ?? "the funnel hostname"} within ${verifySeconds}s (tried ${verify.attempts} times)`,
+          );
         emit(
           "funnel",
           {
             target: `tcp://127.0.0.1:${localPort}`,
+            localTarget: `tcp://127.0.0.1:${localPort}`,
             public: true,
             tcp: Number(publicPort),
-            https: undefined,
-            path: undefined,
+            publicPort: Number(publicPort),
+            ...(name
+              ? {
+                  endpoint: `${name}:${publicPort}`,
+                  url: `${name}:${publicPort}`,
+                }
+              : {}),
+            verified: true,
+            dnsPropagated: true,
+            dnsAttempts: verify.attempts,
           },
           warnings,
-          ["configure Funnel (TCP)"],
+          ["configure Funnel (TCP)", "verify public listener & DNS"],
           [],
           start,
         );
@@ -741,26 +973,7 @@ program
         }
       }
 
-      const verifySeconds = options.verifyTimeout
-        ? Number(options.verifyTimeout)
-        : 120;
-      const name = await (async (): Promise<string | undefined> => {
-        try {
-          const statusJson = await local.runJson<Record<string, unknown>>([
-            "funnel",
-            "status",
-          ]);
-          if (typeof statusJson?.Name === "string")
-            return statusJson.Name.replace(/\.$/, "");
-        } catch {
-          // status unavailable; fall back to local status.
-        }
-        const statusJson = await local.runJson<{ Self?: { DNSName?: string } }>(
-          ["status"],
-        );
-        const dns = statusJson?.Self?.DNSName;
-        return dns ? dns.replace(/\.$/, "") : undefined;
-      })();
+      const name = await funnelDnsName(local);
       const verify = name
         ? await funnelPublicDnsPropagated(name, verifySeconds)
         : { ok: false as const, attempts: 0 };
@@ -768,14 +981,36 @@ program
         throw new Error(
           `FUNNEL_DNS_NOT_PUBLISHED: no public DNS record for ${name ?? "the funnel hostname"} within ${verifySeconds}s (tried ${verify.attempts} times)`,
         );
+      const baseUrl = name ? `https://${name}` : undefined;
+      const pathFor = (value: string | undefined): string => value ?? "/";
+      const exposures = exposed.length
+        ? exposed.map((exposure) => ({
+            publicPort: exposure.https,
+            path: pathFor(exposure.path),
+            localTarget: exposure.target,
+            ...(baseUrl ? { url: `${baseUrl}${pathFor(exposure.path)}` } : {}),
+          }))
+        : [
+            {
+              publicPort: httpsPort,
+              path: pathFor(options.path),
+              localTarget: resolvedTarget as string,
+              ...(baseUrl ? { url: `${baseUrl}${pathFor(options.path)}` } : {}),
+            },
+          ];
       emit(
         "funnel",
         {
           target: exposed.length ? exposed[0]!.target : resolvedTarget,
           public: true,
-          https: httpsPort,
-          path: options.path ?? "/",
-          ...(name ? { url: `https://${name}/` } : {}),
+          ...(exposed.length === 0
+            ? {
+                https: httpsPort,
+                path: pathFor(options.path),
+                ...(baseUrl ? { url: exposures[0]!.url } : {}),
+              }
+            : {}),
+          exposures,
           dnsPropagated: true,
           dnsAttempts: verify.attempts,
         },
@@ -948,6 +1183,51 @@ program
     const opts = program.opts<{ json?: boolean }>();
     if (opts.json) emit("agent-manifest", manifest, [], [], [], start);
     else console.log(JSON.stringify(manifest, null, 2));
+  });
+
+program
+  .command("daemon")
+  .description("Inspect or stop the local tailscaled daemon")
+  .argument(
+    "<action>",
+    "status (report the daemon and any userspace instance this tool started) or stop (stop only a userspace tailscaled tracked in the daemon pidfile)",
+  )
+  .action(async (action: string) => {
+    const start = performance.now();
+    try {
+      if (action === "stop") {
+        const result = await stopUserspaceDaemon();
+        emit(
+          "daemon",
+          { action, ...result },
+          result.stopped ? [] : [result.message],
+          result.stopped ? ["stop tracked userspace tailscaled"] : [],
+          [],
+          start,
+        );
+        return;
+      }
+      if (action !== "status")
+        throw new Error(
+          `DAEMON_ACTION_INVALID: expected "status" or "stop", got "${action}"`,
+        );
+      const status = await daemonStatus();
+      emit(
+        "daemon",
+        {
+          action,
+          running: status.running,
+          tracked: status.tracked,
+          trackedAlive: status.trackedAlive,
+        },
+        status.warnings,
+        status.actions,
+        [],
+        start,
+      );
+    } catch (error) {
+      fail("daemon", error, start);
+    }
   });
 
 const rawArgs = process.argv.slice(2);
