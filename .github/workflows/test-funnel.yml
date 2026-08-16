@@ -19,8 +19,9 @@ jobs:
     env:
       TS_CLIENT_SECRET: ${{ secrets.TS_CLIENT_SECRET || vars.TS_CLIENT_SECRET }}
       TS_TAILNET: ${{ secrets.TS_TAILNET || vars.TS_TAILNET || 'tailadac87.ts.net' }}
-      TS_HOSTNAME: opencode-ci-${{ github.run_id }}
+      TS_HOSTNAME: opencode-ci
       TS_TAGS: opencode
+      TS_EPHEMERAL: "false"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -52,6 +53,12 @@ jobs:
           echo "$OUT"
           echo "$OUT" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const c=JSON.parse(d).resolved.credential;if(!c||!c.found){console.error('CREDENTIAL_NOT_AUTO_DETECTED');process.exit(1)}console.log('auto-detected source:',c.source,'masked:',c.masked)})"
           echo "api credential hint: $(echo "$OUT" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).resolved.apiCredential))")"
+
+      - name: Prune stale offline test node from a previous run
+        env:
+          TS_CLEANUP_OFFLINE_AFTER: "1"
+        run: |
+          tailsacle-cli cleanup --yes --json
 
       - name: Verify API auto-auth and join the tailnet
         run: |
