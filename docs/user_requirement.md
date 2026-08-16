@@ -3,29 +3,121 @@
 > Đặc tả yêu cầu người dùng cho npm package `tailscale-cli` (TypeScript, chạy được trên Windows + Linux).
 > Cập nhật lần cuối: 2026-08-16. Mọi mục đều kèm link tài liệu Tailscale để tra lại khi cần.
 
----
+## Bổ sung bắt buộc: zero-config trust API auto-detection
 
-## 0. Mục lục
+### Mục tiêu
 
-1. [Input gốc](#1-input-gốc)
-2. [Mục tiêu sản phẩm](#2-mục-tiêu-sản-phẩm)
-3. [Quyết định đã chốt](#3-quyết-định-đã-chốt)
-4. [Đầu vào: trust credentials](#4-đầu-vào-trust-credentials)
-5. [Quản lý binary](#5-quản-lý-binary---update-bin)
-6. [Join tailnet](#6-join-tailnet)
-7. [Funnel và Serve](#7-funnel-và-serve)
-8. [Tailnet domain / DNS](#8-tailnet-domain--dns)
-9. [Tailnet policy file (JSON config)](#9-tailnet-policy-file-json-config)
-10. [Auto-resolve và chính sách cảnh báo](#10-auto-resolve-và-chính-sách-cảnh-báo)
-11. [Ma trận đa môi trường](#11-ma-trận-đa-môi-trường)
-12. [Command surface và args](#12-command-surface-và-args)
-13. [Biến môi trường](#13-biến-môi-trường)
-14. [Interactive menu](#14-interactive-menu)
-15. [Agent interface (MCP-style)](#15-agent-interface-mcp-style)
-16. [Logging, exit code](#16-logging-exit-code)
-17. [Ràng buộc kỹ thuật](#17-ràng-buộc-kỹ-thuật)
-18. [Câu hỏi còn mở](#18-câu-hỏi-còn-mở)
-19. [Tổng hợp link](#19-tổng-hợp-link)
+Giảm tối đa cấu hình thủ công và lỗi nhập sai. Người dùng có thể cung cấp Tailscale trust credential dạng chuỗi có prefix:
+
+```text
+tskey-client-k522tBdJ5D21CNTRL-xxxxxxxxxxxxxx
+```
+
+Chuỗi này được xem là **trust API credential chứa hoặc liên kết tới client ID/client secret theo định dạng Tailscale được hỗ trợ**. CLI phải tự nhận diện và dùng nó để lấy access token; không bắt người dùng phải nhập lại từng giá trị nếu credential đã có trong môi trường.
+
+### Thứ tự resolve credential
+
+```text
+CLI flags
+  > config file
+  > biến môi trường chuẩn TS_CLIENT_ID / TS_CLIENT_SECRET
+  > biến môi trường credential chuyên dụng
+  > tự quét toàn bộ process.env để tìm giá trị có dạng tskey-client-...
+  > prompt tương tác nếu có TTY
+  > fail với hướng dẫn rõ ràng nếu không tìm thấy
+```
+
+Các tên env chuyên dụng được hỗ trợ:
+
+- `TS_TRUST_CREDENTIAL`
+- `TS_API_TRUST`
+- `TAILSCALE_TRUST_CREDENTIAL`
+- `TAILSCALE_API_TRUST`
+- `TS_CLIENT_ID`
+- `TS_CLIENT_SECRET`
+
+Nếu `TS_CLIENT_SECRET` có giá trị, luôn ưu tiên giá trị đó theo thứ tự trên. Nếu không có `TS_CLIENT_SECRET`, CLI phải quét **tất cả biến môi trường** và tìm giá trị khớp pattern dạng `tskey-client-<body>`. Không phụ thuộc tên biến, vì credential có thể được CI secret manager inject dưới tên bất kỳ.
+
+### Quy tắc phát hiện
+
+- Chỉ chấp nhận exact prefix `tskey-client-` và ký tự hợp lệ theo format Tailscale; không match substring nằm giữa một giá trị dài hơn.
+- Không in giá trị secret ra log, không đưa vào error message, telemetry, crash report hoặc JSON output.
+- Khi tìm thấy đúng một credential: dùng tự động và log `credential source: env:<NAME>, value: masked`.
+- Khi tìm thấy nhiều credential khác nhau: không chọn ngẫu nhiên; dùng credential chuyên dụng/`TS_CLIENT_SECRET` theo precedence, nếu vẫn còn nhiều thì warning và dùng credential đầu tiên theo thứ tự tên env ổn định, hoặc yêu cầu `--credential-env <NAME>` khi chạy non-interactive.
+- Nếu có `TS_CLIENT_ID` nhưng không có secret: dùng client ID + credential đã detect làm secret/token input theo adapter tương ứng; nếu định dạng không đủ để suy ra cặp OAuth thì fail với lỗi `CREDENTIAL_FORMAT_UNSUPPORTED`, nêu cách đặt `TS_CLIENT_ID` và `TS_CLIENT_SECRET` riêng.
+- Nếu giá trị giống credential nhưng không xác thực được: báo `CREDENTIAL_AUTH_FAILED`, không fallback âm thầm sang credential khác sau khi đã chọn một credential.
+- Không tự ghi secret vào config file. Nếu người dùng truyền secret qua CLI flag, warning rằng shell history có thể lưu lại và khuyến nghị dùng env/secret manager.
+
+### Pseudocode resolve
+
+```ts
+function resolveTrustCredential(input: Input): ResolvedCredential {
+  const explicit = input.credential ?? input.clientSecret;
+  if (explicit) return fromExplicitInput(explicit, input.clientId);
+
+  const named = [
+    "TS_TRUST_CREDENTIAL",
+    "TS_API_TRUST",
+    "TAILSCALE_TRUST_CREDENTIAL",
+    "TAILSCALE_API_TRUST",
+    "TS_CLIENT_SECRET",
+  ];
+  for (const name of named) {
+    const value = process.env[name];
+    if (value && isTailscaleClientCredential(value)) {
+      return { value, source: `env:${name}` };
+    }
+  }
+
+  const matches = Object.entries(process.env)
+    .filter(([, value]) => value && isTailscaleClientCredential(value));
+  return resolveMatchesDeterministically(matches, input.credentialEnv);
+}
+```
+
+### Warning bắt buộc
+
+Khi tự detect thành công:
+
+```text
+[WARN] Chưa truyền --client-secret hoặc TS_CLIENT_SECRET.
+       → đã tự phát hiện Tailscale trust credential trong env:<NAME>
+       → secret đã được mask và không hiển thị
+       → override: --credential-env <NAME> hoặc TS_CLIENT_SECRET=...
+       → docs: https://tailscale.com/docs/reference/trust-credentials
+```
+
+Khi không tìm thấy:
+
+```text
+[ERROR] Không tìm thấy trust credential.
+        → đã kiểm tra TS_CLIENT_SECRET, TS_TRUST_CREDENTIAL, TS_API_TRUST,
+          TAILSCALE_TRUST_CREDENTIAL, TAILSCALE_API_TRUST và toàn bộ env
+        → override: TS_CLIENT_SECRET=... hoặc --client-secret ...
+        → docs: https://tailscale.com/docs/features/oauth-clients
+```
+
+### Args/env bổ sung
+
+```bash
+tailscale-cli doctor --detect-credentials
+tailscale-cli up --credential-env TAILSCALE_API_TRUST
+tailscale-cli up --client-id "$TS_CLIENT_ID"
+tailscale-cli up --client-secret "$TS_CLIENT_SECRET"
+tailscale-cli status --show-resolution
+```
+
+- `--credential-env <NAME>`: chọn rõ biến môi trường chứa trust credential khi có nhiều match.
+- `--detect-credentials`: chạy kiểm tra mà không join node.
+- `--show-resolution`: hiển thị nguồn và giá trị đã resolve nhưng luôn mask secret.
+- Env hỗ trợ: `TS_TRUST_CREDENTIAL`, `TS_API_TRUST`, `TAILSCALE_TRUST_CREDENTIAL`, `TAILSCALE_API_TRUST`, `TS_CLIENT_ID`, `TS_CLIENT_SECRET`.
+
+### An toàn và tương thích
+
+- Tự động detect chỉ là cơ chế **input resolution**, không bypass OAuth scope, policy, tag ownership hoặc quyền hệ điều hành.
+- Sau khi resolve phải chạy `doctor` để kiểm tra token endpoint, client credentials, scopes (`auth_keys`, `devices:core`, `all:read`, DNS/policy nếu cần).
+- Credential không được lưu persistent; chỉ access token cache ngắn hạn trong memory theo mặc định.
+- Với CI, khuyến nghị inject qua secret manager và set `TS_CLIENT_SECRET`; env scan là fallback để giảm cấu hình, không phải lý do để log toàn bộ `process.env`.
 
 ---
 
@@ -125,7 +217,7 @@ Docs: [trust-credentials](https://tailscale.com/docs/reference/trust-credentials
 
 ### 5.1 Luồng xử lý
 
-1. **Resolve**: tìm `tailscale`/`tailscaled` theo thứ tự: đường dẫn user truyền → cache của package (`~/.cache/tailscale-cli/bin`, Windows: `%LOCALAPPDATA%\tailscale-cli\bin`) → `$PATH` → vị trí mặc định của OS.
+1. **Resolve**: tìm `tailscale`/`tailscaled` theo thứ tự: đường dẫn user truyền → cache của package (`~/.cache/tailscale-cli/bin`, Windows: `%LOCALAPPDATA%\\tailscale-cli\\bin`) → `$PATH` → vị trí mặc định của OS.
 2. **Verify**: chạy `tailscale version`, so với version tối thiểu (đề xuất **>= 1.52** vì CLI Funnel/Serve đổi cú pháp từ 1.52).
 3. **Không có / quá cũ** → tải về. Chỉ tải tự động khi thiếu, **không tự nâng cấp ngầm**.
 4. `tailscale-cli --update-bin` → tải bản mới nhất trên track `stable` và thay cache. Có `--track` và `--bin-version` để pin.
@@ -135,7 +227,7 @@ Docs: [trust-credentials](https://tailscale.com/docs/reference/trust-credentials
 | OS | Cách lấy | Lưu ý |
 | --- | --- | --- |
 | Linux (mọi distro) | Static tarball `tailscale_VERSION_ARCH.tgz` từ [pkgs.tailscale.com/stable](https://pkgs.tailscale.com/stable/) (mirror [dl.tailscale.com](https://dl.tailscale.com/stable/)) | Gồm `tailscale` + `tailscaled` + mẫu systemd. Không cần root nếu chạy userspace |
-| Linux (có package manager) | `curl -fsSL https://tailscale.com/install.sh \| sh`, hỗ trợ env `TRACK`, `TAILSCALE_VERSION` | Cần root/sudo |
+| Linux (có package manager) | `curl -fsSL https://tailscale.com/install.sh \\| sh`, hỗ trợ env `TRACK`, `TAILSCALE_VERSION` | Cần root/sudo |
 | Windows | MSI theo kiến trúc (`tailscale-setup-<ver>-<arch>.msi`) hoặc EXE full installer | MSI phụ thuộc kiến trúc; cài im lặng cần Administrator |
 
 > **Không có link cố định kiểu `latest.tgz`** — issue [#3414](https://github.com/tailscale/tailscale/issues/3414) vẫn mở. CLI phải parse trang pkgs để tìm version stable mới nhất. Bản stable mới nhất lúc viết doc: **1.102.2**.
@@ -149,7 +241,7 @@ Docs: [static binaries](https://tailscale.com/docs/install/static) · [install L
 ## 6. Join tailnet
 
 1. `POST /api/v2/tailnet/-/keys` tạo auth key (tags, `ephemeral`, `reusable`, `preauthorized`, `expirySeconds`).
-2. Khởi động daemon nếu cần: `tailscaled --state=... --tun=userspace-networking --socket=...` (Linux non-root/container) hoặc dựa vào service sẵn có (Windows).
+2. Khởi động daemon nếu cần: `tailscaled --state=... --tun=userspace-networking --socket=...` (Linux non-root/container) hoặc dựa vào Windows service.
 3. `tailscale up --auth-key=... --advertise-tags=... --hostname=... --accept-dns`. **Flags không persist giữa các lần chạy**, thiếu flag nào là reset về default.
 4. Thay đổi lẻ về sau dùng `tailscale set` (không làm gián đoạn kết nối). Lưu ý `tailscale up` đã bị **freeze**, flag mới chỉ thêm vào `set`.
 5. Chờ trạng thái `Running` qua `tailscale status --json` thay vì sleep cứng.
@@ -164,18 +256,18 @@ Docs: [`tailscale up`](https://tailscale.com/docs/reference/tailscale-cli/up) ·
 
 - **MagicDNS** bật.
 - **HTTPS Certificates** bật trên tailnet (Funnel dùng tailnet name để cấp cert).
-- Node có **nodeAttr `funnel`** trong policy file, nếu không sẽ lỗi `Funnel not available; "funnel" node attribute not set`.
+- Node có **nodeAttr `funnel`** trong policy file, nếu không sẽ lỗi `Funnel not available; \"funnel\" node attribute not set`.
 
 ```json
-"nodeAttrs": [
-  { "target": ["tag:my-app"], "attr": ["funnel"] }
+\"nodeAttrs\": [
+  { \"target\": [\"tag:my-app\"], \"attr\": [\"funnel\"] }
 ]
 ```
 
 ### 7.2 Lệnh
 
 ```bash
-tailscale funnel --bg 3000          # expose port local ra internet (background)
+tailscale funnel --bg 3000          # expose port local ra internet
 tailscale funnel status
 tailscale funnel reset
 tailscale serve --bg 3000           # chỉ trong tailnet
@@ -228,8 +320,6 @@ Docs: [tailnet-name](https://tailscale.com/docs/concepts/tailnet-name) · [dns-i
 - `GET /api/v2/tailnet/:tailnet/acl` và `POST` để ghi; có `/acl/validate` để test trước khi apply.
 - File là **HuJSON** (JSON có comment + trailing comma) nên phải parse/serialize bằng HuJSON. **Không** dùng `JSON.parse` rồi ghi lại (mất hết comment của team).
 - Bắt buộc: merge có chủ đích (chỉ thêm/sửa đúng entry của mình, idempotent), dùng **ETag / If-Match** để tránh ghi đè đồng thời, luôn hiện **diff**, có `--dry-run`.
-
-Các section CLI cần chạm: `tagOwners`, `nodeAttrs` (funnel), `autoApprovers` (subnet route / exit node), `grants`/`acls`, `ssh`.
 
 ### 9.1 Chính sách ghi
 
@@ -320,8 +410,8 @@ tailscale-cli serve <port...>     # chỉ trong tailnet
 tailscale-cli dns                 # đảm bảo MagicDNS + HTTPS cert
 tailscale-cli policy diff|sync    # diff hoặc apply patch policy file
 tailscale-cli status              # trạng thái node + funnel + DNS
-tailscale-cli doctor              # check creds, scopes, binary, quyền, DNS, cert
-tailscale-cli deploy              # chạy full pipeline: bin → up → policy → dns → funnel → verify
+tailscale-cli doctor              # check creds, scopes, quyền, binary, DNS, cert
+tailscale-cli deploy              # chạy full pipeline: bin → join → policy → dns → funnel → verify
 tailscale-cli down | logout       # ngắt kết nối, xoá node nếu ephemeral
 tailscale-cli --update-bin        # tải binary mới nhất
 tailscale-cli agent-manifest      # in JSON schema mô tả toàn bộ tool cho AI agent (§15)
@@ -387,8 +477,8 @@ tailscale-cli agent-manifest      # in JSON schema mô tả toàn bộ tool cho 
 **`--update-bin`**
 
 | Flag | Mô tả | Default |
-| --- | --- | --- |
-| `--track <track>` | `stable\|unstable` | `stable` |
+ --- | --- |
+| `--track <track>` | `stable\\|unstable` | `stable` |
 | `--bin-version <ver>` | Pin version cụ thể | latest của track |
 | `--bin-dir <path>` | Nơi lưu binary | cache của package |
 | `--force` | Tải lại dù đã mới nhất | `false` |
@@ -458,102 +548,26 @@ Mục tiêu: một AI agent chỉ cần đọc manifest là hiểu luồng và t
 
 ### 15.1 `tailscale-cli agent-manifest`
 
-In ra JSON mô tả các "tool" (mỗi tool map 1:1 với một subcommand), input schema, output schema, tiền đề và tác dụng phụ:
-
-```json
-{
-  "name": "tailscale-cli",
-  "version": "0.1.0",
-  "description": "Deploy a Tailscale node from trust credentials: join tailnet, configure Funnel, DNS and policy.",
-  "auth": {
-    "type": "oauth_client_credentials",
-    "env": ["TS_CLIENT_ID", "TS_CLIENT_SECRET"],
-    "required_scopes": ["auth_keys", "devices:core", "all:read", "dns:write", "policy_file:write"]
-  },
-  "tools": [
-    {
-      "name": "doctor",
-      "description": "Validate credentials, scopes, binary, privileges, DNS and cert readiness. Always call this first.",
-      "input_schema": { "type": "object", "properties": {}, "additionalProperties": false },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "ok": { "type": "boolean" },
-          "checks": { "type": "array", "items": { "type": "object" } },
-          "blocking": { "type": "array", "items": { "type": "string" } }
-        }
-      },
-      "side_effects": "none",
-      "idempotent": true
-    },
-    {
-      "name": "up",
-      "description": "Create a tagged auth key and join the tailnet. Auto-resolves tags from the OAuth client when not provided.",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "tags": { "type": "array", "items": { "type": "string" } },
-          "hostname": { "type": "string" },
-          "ephemeral": { "type": "boolean" },
-          "userspace": { "type": "boolean" }
-        }
-      },
-      "requires": ["binary_present"],
-      "side_effects": "creates auth key, registers a device in the tailnet",
-      "idempotent": true
-    },
-    {
-      "name": "funnel",
-      "description": "Expose local ports/paths to the public internet over the default ts.net domain.",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "expose": {
-            "type": "array",
-            "items": { "type": "string", "pattern": "^\\d+(/[^=]*)?=\\d+$" },
-            "description": "public[/path]=localPort, e.g. 443/api=3001"
-          },
-          "tcp": { "type": "array", "items": { "type": "string" } },
-          "verify": { "type": "boolean", "default": true }
-        }
-      },
-      "requires": ["node_running", "magicdns_enabled", "https_cert_enabled", "nodeattr_funnel"],
-      "side_effects": "publishes a public URL",
-      "idempotent": true
-    },
-    {
-      "name": "policy_sync",
-      "description": "HIGH RISK. Patch the tailnet policy file (tagOwners, nodeAttrs funnel, autoApprovers). Always run policy_diff first and surface the diff to the human.",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "apply": { "type": "boolean", "default": false },
-          "sections": { "type": "array", "items": { "type": "string" } }
-        }
-      },
-      "side_effects": "modifies tailnet-wide access control",
-      "requires_human_confirmation": true,
-      "idempotent": true
-    }
-  ]
-}
-```
+In ra JSON mô tả các "tool" (mỗi tool map 1:1 với một subcommand), input schema, output schema, tiền đề và tác dụng phụ. Manifest phải thêm tool `resolve_credentials` với `--detect-credentials`, `--credential-env` và trạng thái mask.
 
 ### 15.2 Luồng khuyến nghị cho agent
 
-```
-doctor  →  (nếu blocking: báo human)  →  --update-bin nếu thiếu binary
-        →  policy diff  →  xin xác nhận  →  policy sync
-        →  up  →  dns  →  funnel --verify  →  status
+```text
+doctor --detect-credentials
+  → nếu không tìm thấy: báo human cách set TS_CLIENT_SECRET hoặc --credential-env
+  → nếu found: kiểm tra scopes, binary, quyền
+  → --update-bin nếu thiếu binary
+  → policy diff → xin xác nhận → policy sync
+  → up → dns → funnel --verify → status
 ```
 
 ### 15.3 Quy tắc agent phải tuân
 
-- Luôn chạy `doctor` trước; nếu có `blocking` thì dừng và báo người dùng, kèm link docs trong output.
+- Luôn chạy `doctor --detect-credentials` trước; nếu có blocking thì dừng và báo người dùng, kèm link docs trong output.
 - Mọi lệnh gọi phải kèm `--json` để parse output; không parse log pretty.
 - Không tự ý chạy `policy sync --apply` khi chưa có xác nhận của con người.
 - Không log/echo lại secret hay auth key nhận được trong output.
-- Đọc trường `warnings[]` trong JSON output và truyền nguyên văn cho người dùng (đó là chỗ CLI nói đã tự chọn giá trị gì).
+- Đọc trường `warnings[]` trong JSON output và truyền nguyên văn cho người dùng.
 - Retry chỉ với lỗi có `retryable: true`. Lỗi quyền và lỗi scope thì không retry.
 
 ### 15.4 Envelope JSON output chuẩn
@@ -563,13 +577,11 @@ Mọi lệnh chạy với `--json` trả về cùng một hình dạng:
 ```json
 {
   "ok": true,
-  "command": "funnel",
-  "durationMs": 8421,
-  "resolved": { "expose": ["443=3000"], "source": { "expose": "auto-detect" } },
-  "result": { "publicUrls": ["https://my-app.tailnet-1a2b.ts.net"] },
-  "warnings": [
-    { "code": "FUNNEL_PORT_AUTODETECTED", "message": "...", "docs": "https://tailscale.com/docs/reference/tailscale-cli/funnel" }
-  ],
+  "command": "resolve_credentials",
+  "durationMs": 42,
+  "resolved": { "source": "env:TS_CLIENT_SECRET", "masked": true },
+  "result": { "credentialType": "tailscale_client" },
+  "warnings": [],
   "errors": []
 }
 ```
@@ -582,7 +594,7 @@ Mọi lệnh chạy với `--json` trả về cùng một hình dạng:
 - Hai chế độ output: **pretty** (TTY, có step, ✓/✗) và **JSON lines** (CI, log aggregator).
 - **Mask bắt buộc**: client_secret, access token, auth key (in dạng `tskey-auth-****`).
 - Mỗi bước log: bắt đầu → tham số đã resolve kèm nguồn → kết quả → thời gian.
-- Lỗi phải có **mã lỗi + gợi ý fix + link docs** (ví dụ thiếu nodeAttr funnel thì in luôn đoạn JSON cần thêm).
+- Lỗi phải có **mã lỗi + gợi ý fix + link docs**.
 
 | Exit code | Nghĩa |
 | --- | --- |
