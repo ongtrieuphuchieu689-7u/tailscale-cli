@@ -306,7 +306,9 @@ export const manifest = {
       summary: "Show local Tailscale status.",
       command: ["status", ["--show-resolution"]],
       consumes: { inputs: [] },
-      outputs: { json: "resolved = tailscale status JSON (optionally with credential resolution)" },
+      outputs: {
+        json: "resolved = tailscale status JSON (optionally with credential resolution)",
+      },
       scopes: ["none"],
       privileges: ["tailscaled running"],
       sideEffects: ["none"],

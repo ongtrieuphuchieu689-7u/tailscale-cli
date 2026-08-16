@@ -489,9 +489,9 @@ export function apiCredentialHint(
   );
   const hasCredential = Boolean(
     envFirst("TS_API_KEY", "TS_ACCESS_TOKEN", "TS_API_TOKEN") ||
-      hasTrustCredential ||
-      (env.TS_OAUTH_CLIENT_ID && env.TS_OAUTH_CLIENT_SECRET) ||
-      (env.TS_CLIENT_ID && env.TS_CLIENT_SECRET),
+    hasTrustCredential ||
+    (env.TS_OAUTH_CLIENT_ID && env.TS_OAUTH_CLIENT_SECRET) ||
+    (env.TS_CLIENT_ID && env.TS_CLIENT_SECRET),
   );
   return hasCredential ? "configured" : "missing";
 }

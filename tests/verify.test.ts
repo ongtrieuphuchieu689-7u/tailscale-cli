@@ -5,7 +5,9 @@ import { tcpConnect, verifyEndpointReachable } from "../src/verify.js";
 describe("tcpConnect", () => {
   it("resolves when a listener accepts the connection", async () => {
     const server = createServer((socket) => socket.destroy());
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     const port = (server.address() as { port: number }).port;
     try {
       await expect(
@@ -24,7 +26,9 @@ describe("tcpConnect", () => {
 describe("verifyEndpointReachable", () => {
   it("verifies a TCP endpoint against a live listener", async () => {
     const server = createServer((socket) => socket.destroy());
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     const port = (server.address() as { port: number }).port;
     try {
       const result = await verifyEndpointReachable(

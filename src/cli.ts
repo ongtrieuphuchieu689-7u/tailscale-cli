@@ -27,7 +27,12 @@ import {
   latestWindowsInstallInfo,
   updateCacheBinary,
 } from "./binary.js";
-import { ensureDaemon, inspectDaemon, daemonStatus, stopUserspaceDaemon } from "./daemon.js";
+import {
+  ensureDaemon,
+  inspectDaemon,
+  daemonStatus,
+  stopUserspaceDaemon,
+} from "./daemon.js";
 import { manifest } from "./manifest.js";
 import {
   ensureFunnelAccess,
@@ -121,18 +126,36 @@ function configEnv(): NodeJS.ProcessEnv {
     const { config } = loaded;
     if (config.profile && !env.TS_PROFILE) fileEnv.TS_PROFILE = config.profile;
     if (config.tailnet && !env.TS_TAILNET) fileEnv.TS_TAILNET = config.tailnet;
-    if (config.hostname && !env.TS_HOSTNAME) fileEnv.TS_HOSTNAME = config.hostname;
-    if (config.tags?.length && !env.TS_TAGS) fileEnv.TS_TAGS = config.tags.join(",");
-    if (config.ssh !== undefined && env.TS_SSH === undefined) fileEnv.TS_SSH = String(config.ssh);
-    if (config.keyExpiry && !env.TS_KEY_EXPIRY) fileEnv.TS_KEY_EXPIRY = config.keyExpiry;
-    if (config.preauthorized !== undefined && env.TS_PREAUTHORIZED === undefined) fileEnv.TS_PREAUTHORIZED = String(config.preauthorized);
-    if (config.reusable !== undefined && env.TS_REUSABLE === undefined) fileEnv.TS_REUSABLE = String(config.reusable);
-    if (config.ephemeral !== undefined && env.TS_EPHEMERAL === undefined) fileEnv.TS_EPHEMERAL = String(config.ephemeral);
-    if (config.acceptDns !== undefined && env.TS_ACCEPT_DNS === undefined) fileEnv.TS_ACCEPT_DNS = String(config.acceptDns);
-    if (config.acceptRoutes !== undefined && env.TS_ACCEPT_ROUTES === undefined) fileEnv.TS_ACCEPT_ROUTES = String(config.acceptRoutes);
-    if (config.cleanupAfter !== undefined && env.TS_CLEANUP_OFFLINE_AFTER === undefined) fileEnv.TS_CLEANUP_OFFLINE_AFTER = String(config.cleanupAfter);
-    if (config.credentialEnv && !env.TS_CREDENTIAL_ENV) fileEnv.TS_CREDENTIAL_ENV = config.credentialEnv;
-    if (config.tagOwner?.length && !env.TS_TAG_OWNER) fileEnv.TS_TAG_OWNER = config.tagOwner.join(",");
+    if (config.hostname && !env.TS_HOSTNAME)
+      fileEnv.TS_HOSTNAME = config.hostname;
+    if (config.tags?.length && !env.TS_TAGS)
+      fileEnv.TS_TAGS = config.tags.join(",");
+    if (config.ssh !== undefined && env.TS_SSH === undefined)
+      fileEnv.TS_SSH = String(config.ssh);
+    if (config.keyExpiry && !env.TS_KEY_EXPIRY)
+      fileEnv.TS_KEY_EXPIRY = config.keyExpiry;
+    if (
+      config.preauthorized !== undefined &&
+      env.TS_PREAUTHORIZED === undefined
+    )
+      fileEnv.TS_PREAUTHORIZED = String(config.preauthorized);
+    if (config.reusable !== undefined && env.TS_REUSABLE === undefined)
+      fileEnv.TS_REUSABLE = String(config.reusable);
+    if (config.ephemeral !== undefined && env.TS_EPHEMERAL === undefined)
+      fileEnv.TS_EPHEMERAL = String(config.ephemeral);
+    if (config.acceptDns !== undefined && env.TS_ACCEPT_DNS === undefined)
+      fileEnv.TS_ACCEPT_DNS = String(config.acceptDns);
+    if (config.acceptRoutes !== undefined && env.TS_ACCEPT_ROUTES === undefined)
+      fileEnv.TS_ACCEPT_ROUTES = String(config.acceptRoutes);
+    if (
+      config.cleanupAfter !== undefined &&
+      env.TS_CLEANUP_OFFLINE_AFTER === undefined
+    )
+      fileEnv.TS_CLEANUP_OFFLINE_AFTER = String(config.cleanupAfter);
+    if (config.credentialEnv && !env.TS_CREDENTIAL_ENV)
+      fileEnv.TS_CREDENTIAL_ENV = config.credentialEnv;
+    if (config.tagOwner?.length && !env.TS_TAG_OWNER)
+      fileEnv.TS_TAG_OWNER = config.tagOwner.join(",");
     env = fileEnv;
   }
   if (opts.profile) {
@@ -263,7 +286,8 @@ function exitCodeFor(error: unknown): number {
   return 1;
 }
 
-const DOCS_BASE = "https://github.com/ongtrieuphuchieu689-7u/tailscale-cli/blob/main/docs";
+const DOCS_BASE =
+  "https://github.com/ongtrieuphuchieu689-7u/tailscale-cli/blob/main/docs";
 const ERROR_DOCS: Record<string, string> = {
   CREDENTIAL_NOT_FOUND: `${DOCS_BASE}/user_requirement.md#credential-resolution`,
   CREDENTIAL_AMBIGUOUS: `${DOCS_BASE}/user_requirement.md#credential-resolution`,
@@ -283,7 +307,9 @@ const ERROR_DOCS: Record<string, string> = {
   PRIVILEGE_REQUIRED: `${DOCS_BASE}/user_requirement.md#privileges`,
 };
 
-async function credentialFromOptions(): Promise<ReturnType<typeof resolveCredential>> {
+async function credentialFromOptions(): Promise<
+  ReturnType<typeof resolveCredential>
+> {
   const opts = program.opts<CliOptions>();
   const env = configEnv();
   const name = opts.credentialEnv ?? env.TS_CREDENTIAL_ENV?.trim();
@@ -645,7 +671,10 @@ program
 program
   .command("status")
   .description("Show local Tailscale status")
-  .option("--show-resolution", "include credential resolution source and masked value")
+  .option(
+    "--show-resolution",
+    "include credential resolution source and masked value",
+  )
   .action(async (options: { showResolution?: boolean }) => {
     const start = performance.now();
     try {
@@ -889,7 +918,10 @@ program
   .option("--yes")
   .option("--apply-policy")
   .option("--enable-https")
-  .option("--verify-timeout <sec>", "public DNS and live-endpoint verification timeout")
+  .option(
+    "--verify-timeout <sec>",
+    "public DNS and live-endpoint verification timeout",
+  )
   .action(async (target: string | undefined, options: FunnelOptions) => {
     const start = performance.now();
     try {
@@ -1074,7 +1106,9 @@ program
         );
       const publicPorts = [
         ...new Set(
-          exposed.length ? exposed.map((exposure) => exposure.https) : [httpsPort],
+          exposed.length
+            ? exposed.map((exposure) => exposure.https)
+            : [httpsPort],
         ),
       ];
       const endpoint = name
@@ -1185,50 +1219,56 @@ program
   .option("--enable-magicdns")
   .option("--dry-run")
   .option("--yes")
-  .action(async (options: { enableMagicdns?: boolean; dryRun?: boolean; yes?: boolean }) => {
-    const start = performance.now();
-    try {
-      const api = new TailscaleApiClient(
-        resolveConfig(configEnv()),
-        process.env,
-        resolvedCredentialEnv(),
-      );
-      if (options.enableMagicdns) {
-        const approved = await confirm(
-          "Enable MagicDNS on the tailnet?",
-          Boolean(options.yes),
+  .action(
+    async (options: {
+      enableMagicdns?: boolean;
+      dryRun?: boolean;
+      yes?: boolean;
+    }) => {
+      const start = performance.now();
+      try {
+        const api = new TailscaleApiClient(
+          resolveConfig(configEnv()),
+          process.env,
+          resolvedCredentialEnv(),
         );
-        if (!approved)
-          throw new Error(
-            "DNS_MAGICDNS_CONFIRMATION_REQUIRED: pass --yes to enable MagicDNS",
+        if (options.enableMagicdns) {
+          const approved = await confirm(
+            "Enable MagicDNS on the tailnet?",
+            Boolean(options.yes),
           );
-        if (options.dryRun) {
+          if (!approved)
+            throw new Error(
+              "DNS_MAGICDNS_CONFIRMATION_REQUIRED: pass --yes to enable MagicDNS",
+            );
+          if (options.dryRun) {
+            emit(
+              "dns",
+              { magicDNSEnabled: true, dryRun: true },
+              [],
+              [],
+              [],
+              start,
+            );
+            return;
+          }
+          await api.enableMagicDns();
           emit(
             "dns",
-            { magicDNSEnabled: true, dryRun: true },
+            { magicDNSEnabled: true },
             [],
-            [],
+            ["enable MagicDNS"],
             [],
             start,
           );
           return;
         }
-        await api.enableMagicDns();
-        emit(
-          "dns",
-          { magicDNSEnabled: true },
-          [],
-          ["enable MagicDNS"],
-          [],
-          start,
-        );
-        return;
+        emit("dns", await api.getDns(), [], [], [], start);
+      } catch (error) {
+        fail("dns", error, start);
       }
-      emit("dns", await api.getDns(), [], [], [], start);
-    } catch (error) {
-      fail("dns", error, start);
-    }
-  });
+    },
+  );
 
 program
   .command("policy")
