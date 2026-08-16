@@ -15,7 +15,11 @@ import {
   resolveCredential,
   runtime,
 } from "./core.js";
-import { deploy as deployCommand } from "./deploy.js";
+import {
+  deploy as deployCommand,
+  ensureFunnelReadiness,
+  resolveTags,
+} from "./deploy.js";
 import {
   findTailscale,
   tailscaleVersion,
@@ -935,6 +939,11 @@ program
         );
 
       const warnings: string[] = [];
+      const { tags: deploymentTags, autoTagged } = resolveTags(config);
+      if (autoTagged)
+        warnings.push(
+          `AUTO_TAG: no TS_TAGS configured; using deterministic tag ${deploymentTags[0]} (override with TS_TAGS)`,
+        );
       if (config.ephemeral)
         throw new Error(
           "FUNNEL_EPHEMERAL: the node is ephemeral so Funnel will never publish public DNS; set TS_EPHEMERAL=false (or use TS_PROFILE=funnel-app which defaults to non-ephemeral) and re-run",
@@ -944,6 +953,16 @@ program
       const exposed = (options.expose ?? [])
         .filter(Boolean)
         .map(parseFunnelExpose);
+      if (options.yes && options.applyPolicy) {
+        const readiness = await ensureFunnelReadiness(config, deploymentTags, {
+          yes: true,
+          applyPolicy: true,
+          ...(credentialEnvNameResolved
+            ? { credentialEnvName: credentialEnvNameResolved }
+            : {}),
+        });
+        warnings.push(...readiness);
+      }
       let resolvedTarget = target;
       const verifySeconds = options.verifyTimeout
         ? Number(options.verifyTimeout)
@@ -1065,7 +1084,7 @@ program
         warnings.push(
           "SIDE_EFFECT_PLAN: adding the funnel node attribute for the deployment tags before retrying",
         );
-        const provisioned = await ensureFunnelAccess(config, config.tags, {
+        const provisioned = await ensureFunnelAccess(config, deploymentTags, {
           yes: true,
           ...(credentialEnvNameResolved
             ? { credentialEnvName: credentialEnvNameResolved }

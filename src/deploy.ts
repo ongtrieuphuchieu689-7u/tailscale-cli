@@ -155,7 +155,7 @@ function isTagProvisionError(error: unknown): boolean {
   );
 }
 
-function resolveTags(config: ResolvedConfig): {
+export function resolveTags(config: ResolvedConfig): {
   tags: string[];
   autoTagged: boolean;
 } {
