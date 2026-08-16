@@ -63,7 +63,7 @@ jobs:
       - name: Verify API auto-auth and join the tailnet
         run: |
           tailsacle-cli dns --json
-          OUT="$(tailsacle-cli deploy --yes --json)"
+          OUT="$(tailsacle-cli deploy --yes --apply-policy --enable-https --cleanup --json)"
           echo "$OUT"
           echo "$OUT" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const j=JSON.parse(d);const dev=j.resolved&&j.resolved.device;const dns=dev&&dev.dnsName&&dev.dnsName.replace(/\.\s*$/,'');if(!dns){console.error('NO_DNS_NAME');process.exit(1)}const base='https://'+dns+'/';require('fs').appendFileSync(process.env.GITHUB_ENV,'FUNNEL_BASE='+base+'\n');console.log('funnel_base='+base)})"
 
@@ -88,7 +88,7 @@ jobs:
 
       - name: Publish Funnel tunnel and print access info
         run: |
-          tailsacle-cli funnel http://127.0.0.1:4096 --https 443 --yes --json
+          tailsacle-cli funnel http://127.0.0.1:4096 --https 443 --yes --apply-policy --enable-https --verify-timeout 180 --json
           echo
           echo "==================== ACCESS ===================="
           echo "OpenCode UI : $FUNNEL_BASE"

@@ -120,15 +120,18 @@ Cleanup is restricted to devices that are offline beyond `TS_CLEANUP_OFFLINE_AFT
 
 | Variable | Purpose |
 |---|---|
-| `TS_TAILNET` | Tailnet/domain used by API calls |
+| `TS_TAILNET` | Tailnet/domain used by API calls (custom non-`*.ts.net` domains warn; Funnel relies on a Tailscale-hosted domain) |
 | `TS_HOSTNAME` | Node hostname |
 | `TS_TAGS` | Comma-separated node tags without or with `tag:` prefix |
-| `TS_PROFILE` | `ci`, `container`, `vm`, `windows`, `dev`, `funnel-app`, `subnet-router`, `exit-node` |
+| `TS_PROFILE` | `ci`, `container`, `vm`, `windows`, `dev`, `funnel-app`, `subnet-router`, `exit-node` (`funnel-app` defaults to non-ephemeral) |
 | `TS_SSH` | Enable SSH intent, default `true` |
 | `TS_ACCEPT_DNS` | Accept DNS, default `true` |
 | `TS_ACCEPT_ROUTES` | Accept subnet/exit routes when enabled by profile |
-| `TS_EPHEMERAL` | Override ephemeral node behavior |
+| `TS_PREAUTHORIZED` | Create pre-authorized auth keys, default `true` |
+| `TS_KEY_EXPIRY` | Auth-key lifetime in seconds or `max` (server maximum, default). Set `TS_KEY_EXPIRY=3600` to pin a shorter lifetime. This is the auth-key expiry, not the node key-expiry policy |
+| `TS_EPHEMERAL` | Override ephemeral node behavior (ephemeral nodes cannot publish public Funnel DNS) |
 | `TS_REUSABLE` | Override auth-key reuse behavior |
+| `TS_TAG_BASE` | Base for the deterministic auto-tag when `TS_TAGS` is unset (`tag:<base>`; on CI the `GITHUB_REPOSITORY`/`GITLAB_PROJECT_PATH` is preferred) |
 | `TS_AUTH_KEY` | Pre-created node auth key |
 | `TS_API_KEY` | Tailscale API key |
 | `TS_ACCESS_TOKEN` | Bearer access token |
@@ -138,11 +141,40 @@ Cleanup is restricted to devices that are offline beyond `TS_CLEANUP_OFFLINE_AFT
 | `TS_OAUTH_CLIENT_SECRET` | OAuth client secret |
 | `TS_POLICY_FILE` | Default policy file path |
 | `TS_CLEANUP_OFFLINE_AFTER` | Cleanup threshold in seconds; default 3600 |
+| `TS_NO_CLEANUP` | `true`/`1` disables the automatic cleanup step at the end of a `--cleanup` deploy |
 | `TS_PROTECTED_DEVICES` | Comma-separated protected device IDs/names |
+| `TS_BIN_DIR` | Binary cache directory for `update-bin`/auto-download |
 | `TS_TAILSCALE_BIN` | Explicit Tailscale binary path |
+| `TS_CLI_YES` | `true`/`1` answers every confirmation like `--yes` (for embedded automation) |
 | `TS_UNATTENDED` | Windows unattended join intent |
 
-Secrets are never returned raw by `doctor` and are not written to logs by the CLI.
+Any env var whose value starts with `tskey-client-` is auto-detected as an OAuth trust
+credential; use `--credential-env <name>` to select one explicitly when several are
+present. Secrets are never returned raw by `doctor` and are not written to logs; server
+error text is scrubbed for `tskey-…` and `Authorization` material.
+
+## Interactive menu and safety flags
+
+Running `tailsacle-cli` with no arguments in a TTY opens an interactive menu that prompts
+for the profile, target/port, policy action and binary update, then prints the equivalent
+non-interactive command before executing it.
+
+Safety scoping: `--yes` only skips confirmation prompts. Auto-provisioning side effects
+are gated behind explicit flags so a plain `--yes` never quietly rewrites tailnet policy:
+
+| Flag | Effect |
+|---|---|
+| `--apply-policy` | Allow HuJSON-preserving `tagOwners`/`nodeAttrs` provisioning (with plan + warning) |
+| `--enable-https` | Allow enabling tailnet-wide HTTPS (required for Serve/Funnel) |
+| `--cleanup` | Run the exact-match offline device cleanup at the end of a deploy |
+| `--verify-timeout <sec>` | Funnel public-DNS propagation timeout (default 120s) |
+| `funnel --tcp 10000:5432` | TCP Funnel instead of HTTPS |
+| `funnel --expose 443=3000 --expose 443/api=3001` | Multiple HTTPS Funnel targets/paths |
+| `dns --enable-magicdns --yes` | Enable MagicDNS on the tailnet |
+| `update-bin --force --skip-checksum` | Force a fresh verified download; skip the SHA256 check (not recommended) |
+
+`funnel` refuses ephemeral nodes (they never publish public DNS), auto-detects the target
+from `$PORT` when none is given, and verifies the public A record before reporting success.
 
 ## Development
 

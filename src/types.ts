@@ -1,5 +1,13 @@
-export type Profile = 'ci' | 'container' | 'vm' | 'windows' | 'dev' | 'funnel-app' | 'subnet-router' | 'exit-node';
-export type OutputFormat = 'pretty' | 'json';
+export type Profile =
+  | "ci"
+  | "container"
+  | "vm"
+  | "windows"
+  | "dev"
+  | "funnel-app"
+  | "subnet-router"
+  | "exit-node";
+export type OutputFormat = "pretty" | "json";
 
 export interface ResolvedConfig {
   profile: Profile;
@@ -26,15 +34,27 @@ export interface CredentialResolution {
   error?: string;
 }
 
+export interface CleanupCandidate {
+  id: string;
+  hostname?: string;
+  name?: string;
+  dnsName?: string;
+  tags?: string[];
+  lastSeen?: string;
+  offlineSinceSeconds: number;
+  match: string;
+}
+
 export interface Envelope<T> {
   ok: boolean;
   command: string;
+  durationMs: number;
   resolved?: T;
   warnings: string[];
   requiredPrivileges: string[];
   sideEffects: string[];
   retryable: boolean;
-  error?: { code: string; message: string };
+  error?: { code: string; message: string; status?: number };
 }
 
 export interface Device {
@@ -72,7 +92,9 @@ export interface Exposure {
 export interface DeploymentResult {
   binary: { path: string; version: string };
   device: Device | Record<string, unknown>;
-  authKeySource: 'provided' | 'created';
+  authKeySource: "provided" | "created";
   exposures: Exposure[];
   warnings: string[];
+  source: ResolvedConfig["source"];
+  cleanup?: { candidates: string[]; deleted: string[]; skipped?: boolean };
 }
