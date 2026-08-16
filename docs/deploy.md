@@ -68,8 +68,11 @@ clamped with `KEY_EXPIRY_CLAMPED`. Override per run with `deploy --key-expiry 36
   running as Administrator; otherwise the exact `msiexec /i "<cache>\…msi" /qn` command is
   returned. There is no portable Windows binary.
 - Daemon: `systemd` → `sudo systemctl enable --now tailscaled` → userspace fallback
-  (`tailscaled --tun=userspace-networking --state=… --socket=…`). Userspace start is skipped
-  under CI; set `TS_TAILSCALE_SOCKET`/`TS_TAILSCALED_STATE` to relocate the socket/state.
+  (`tailscaled --tun=userspace-networking --state=… --socket=…`). On Linux the fallback
+  reuses the versioned static `tailscaled` downloaded into the binary cache when no system
+  `tailscaled` exists, and runs as the current user (socket/state default under the binary
+  cache dir) so no root/`sudo` is required; `TS_TAILSCALE_SOCKET`/`TS_TAILSCALED_STATE`
+  relocate the socket/state. `DAEMON_USERSPACE` warns whenever this fallback starts.
 
 ## 6. Verification
 

@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { cacheBinDir } from "./binary.js";
+import { cacheBinDir, cacheBinaryVersion } from "./binary.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -61,34 +61,48 @@ export async function inspectDaemon(): Promise<DaemonState> {
   return { running: false, warnings, actions: [] };
 }
 
-function daemonArgs(): string[] {
-  const socket =
-    process.env.TS_TAILSCALE_SOCKET ?? "/var/run/tailscale/tailscaled.sock";
-  const state =
-    process.env.TS_TAILSCALED_STATE ?? "/var/lib/tailscale/tailscaled.state";
-  return [
-    "--tun=userspace-networking",
-    `--state=${state}`,
-    `--socket=${socket}`,
-  ];
+function cachedDaemonPath(): string | undefined {
+  const version = cacheBinaryVersion();
+  if (!version) return undefined;
+  const path_ = join(cacheBinDir(), `tailscaled-${version}`);
+  return existsSync(path_) ? path_ : undefined;
+}
+
+async function resolveDaemonBin(): Promise<string> {
+  if (await tryRun("tailscaled", ["--version"])) return "tailscaled";
+  return cachedDaemonPath() ?? "tailscaled";
 }
 
 async function startUserspaceDaemon(): Promise<{
   started: boolean;
   command: string;
 }> {
-  const args = daemonArgs();
-  const socket =
-    process.env.TS_TAILSCALE_SOCKET ?? "/var/run/tailscale/tailscaled.sock";
+  const bin = await resolveDaemonBin();
   const root = typeof process.getuid === "function" && process.getuid() === 0;
-  const command: string[] | undefined = root
-    ? ["tailscaled", ...args]
-    : process.env.CI
-      ? undefined
-      : ["sudo", "tailscaled", ...args];
-  if (!command)
-    return { started: false, command: `tailscaled ${args.join(" ")}` };
-  const child = spawn(command[0]!, command.slice(1), {
+  const socket =
+    process.env.TS_TAILSCALE_SOCKET?.trim() ||
+    (root
+      ? "/var/run/tailscale/tailscaled.sock"
+      : join(cacheBinDir(), "run", "tailscaled.sock"));
+  const state =
+    process.env.TS_TAILSCALED_STATE?.trim() ||
+    (root
+      ? "/var/lib/tailscale/tailscaled.state"
+      : join(cacheBinDir(), "tailscaled.state"));
+  const args = [
+    "--tun=userspace-networking",
+    `--state=${state}`,
+    `--socket=${socket}`,
+  ];
+  for (const path_ of [dirname(state), dirname(socket)]) {
+    try {
+      mkdirSync(path_, { recursive: true });
+    } catch {
+      // best-effort; the daemon fails loudly when a dir cannot be created
+    }
+  }
+  const command = [bin, ...args];
+  const child = spawn(bin, args, {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
@@ -101,13 +115,16 @@ async function startUserspaceDaemon(): Promise<{
     await sleep(500);
     if (await tryRun("pgrep", ["-x", "tailscaled"])) {
       const pids = await userspacePids();
-      if (pids[0])
+      if (pids[0]) {
         writeTrackedDaemon({
           pid: pids[0],
           socket,
           command: command.join(" "),
           startedAt: new Date().toISOString(),
         });
+        if (!process.env.TS_TAILSCALE_SOCKET)
+          process.env.TS_TAILSCALE_SOCKET = socket;
+      }
       return { started: true, command: command.join(" ") };
     }
   }
@@ -136,15 +153,6 @@ export async function ensureDaemon(): Promise<DaemonState> {
         actions: [userspace.command],
       };
     }
-    if (process.env.CI)
-      return {
-        running: false,
-        warnings: [
-          ...inspected.warnings,
-          "DAEMON_USERSPACE_SKIPPED: CI detected; not auto-starting a userspace daemon. Provide tailscaled via the runner image or start it explicitly",
-        ],
-        actions,
-      };
     return {
       running: false,
       warnings: [
