@@ -1034,7 +1034,7 @@ program
         warnings.push(...https.warnings);
       }
       const runFunnel = async (extra: string[]): Promise<void> => {
-        await local.funnel(["--bg", ...extra]);
+        await local.funnel(["--bg", "--yes", ...extra]);
       };
       try {
         if (exposed.length) {
@@ -1190,7 +1190,7 @@ program
       const start = performance.now();
       try {
         const local = new TailscaleLocal(await findTailscale());
-        const args = ["--bg"];
+        const args = ["--bg", "--yes"];
         if (options.https) args.push(`--https=${Number(options.https)}`);
         else if (options.http) args.push(`--http=${Number(options.http)}`);
         else if (options.tcp) args.push(`--tcp=${Number(options.tcp)}`);
