@@ -38,6 +38,50 @@ function indentOf(text: string, index: number): string {
   return match ? match[0] : "";
 }
 
+function withTrailingComma(body: string): string {
+  let inString = false;
+  let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
+  let lastCode = -1;
+  for (let i = 0; i < body.length; i += 1) {
+    const c = body[i]!;
+    const next = body[i + 1];
+    if (lineComment) {
+      if (c === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (c === "*" && next === "/") {
+        blockComment = false;
+        i += 1;
+      }
+      continue;
+    }
+    if (inString) {
+      lastCode = i;
+      if (escaped) escaped = false;
+      else if (c === "\\") escaped = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === "/" && next === "/") {
+      lineComment = true;
+      i += 1;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      blockComment = true;
+      i += 1;
+      continue;
+    }
+    if (c === '"') inString = true;
+    if (!/\s/.test(c)) lastCode = i;
+  }
+  if (lastCode === -1 || body[lastCode] === ",") return body;
+  return `${body.slice(0, lastCode + 1)},${body.slice(lastCode + 1)}`;
+}
+
 export type HuJsonSectionShape = "object" | "array";
 
 /**
@@ -78,7 +122,8 @@ export function ensureHuJsonSection(
     const insert = nonEmpty
       .map((line) => `${closingIndent}${line},`)
       .join("\n");
-    return `${raw.slice(0, close)}${body.endsWith("\n") ? "" : "\n"}${insert}\n${raw.slice(close)}`;
+    const separatedBody = withTrailingComma(body);
+    return `${raw.slice(0, open + 1)}${separatedBody}${separatedBody.endsWith("\n") ? "" : "\n"}${insert}\n${raw.slice(close)}`;
   }
 
   const firstOpen = raw.indexOf("{");

@@ -6,7 +6,10 @@ import {
 } from "../src/hujson.js";
 
 function parseHuJson(text: string): unknown {
-  const stripped = text.replace(/\/\/.*$/gm, "").replace(/,\s*([}\]])/g, "$1");
+  const stripped = text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "")
+    .replace(/,\s*([}\]])/g, "$1");
   return JSON.parse(stripped);
 }
 
@@ -28,6 +31,23 @@ describe("ensureHuJsonKey", () => {
     expect(parseHuJson(merged)).toEqual({
       tagOwners: { "tag:ci": ["tag:admin"], "tag:build": ["tag:admin"] },
       autoApprovers: { route: ["tag:ci"] },
+    });
+  });
+
+  it("adds a separator when the existing object has no trailing comma", () => {
+    const raw = `{
+  "tagOwners": {
+    "tag:ci": ["tag:admin"] // existing owner
+  }
+}`;
+    const merged = ensureHuJsonKey(raw, "tagOwners", {
+      "tag:build": ["tag:admin"],
+    });
+    expect(parseHuJson(merged)).toEqual({
+      tagOwners: {
+        "tag:ci": ["tag:admin"],
+        "tag:build": ["tag:admin"],
+      },
     });
   });
 
@@ -82,6 +102,25 @@ describe("ensureHuJsonArrayItem", () => {
       nodeAttrs: { target: string[]; attr: string[] }[];
     };
     expect(parsed.nodeAttrs.map((e) => e.target[0])).toEqual([
+      "tag:ci",
+      "tag:build",
+    ]);
+  });
+
+  it("adds a separator when the existing array has no trailing comma", () => {
+    const raw = `{
+  "nodeAttrs": [
+    { "target": ["tag:ci"], "attr": ["funnel"] } /* existing */
+  ]
+}`;
+    const merged = ensureHuJsonArrayItem(raw, "nodeAttrs", {
+      target: ["tag:build"],
+      attr: ["funnel"],
+    });
+    const parsed = parseHuJson(merged) as {
+      nodeAttrs: { target: string[] }[];
+    };
+    expect(parsed.nodeAttrs.map((entry) => entry.target[0])).toEqual([
       "tag:ci",
       "tag:build",
     ]);

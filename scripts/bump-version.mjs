@@ -39,8 +39,11 @@ if (cmp(next, prev) <= 0) {
 }
 
 if (process.argv.includes('--verify')) {
-  const pub = spawnSync('npm', ['view', 'tailsacle-cli', 'version'], { encoding: 'utf8' });
-  if (pub.status !== 0) fail(`could not query npmjs registry: ${pub.stderr.trim()}`);
+  const pub = process.platform === 'win32'
+    ? spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', 'npm view tailsacle-cli version'], { encoding: 'utf8' })
+    : spawnSync('npm', ['view', 'tailsacle-cli', 'version'], { encoding: 'utf8' });
+  if (pub.error) fail(`could not run npm: ${pub.error.message}`);
+  if (pub.status !== 0) fail(`could not query npmjs registry: ${(pub.stderr ?? '').trim()}`);
   const published = pub.stdout.trim();
   if (published && cmp(next, published) <= 0) {
     fail(`pending ${next} is not greater than published ${published}.`);
