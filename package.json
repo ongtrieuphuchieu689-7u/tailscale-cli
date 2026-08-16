@@ -37,7 +37,8 @@
     "smoke": "npm run build && node dist/cli.js --help && node dist/cli.js agent-manifest --json",
     "pack:check": "npm run build && npm pack --dry-run",
     "version:bump": "node scripts/bump-version.mjs",
-    "version:bump:verify": "node scripts/bump-version.mjs --verify"
+    "version:bump:verify": "node scripts/bump-version.mjs --verify",
+    "deploy:secret-ongtrieuphuchieu689-7u": "ghcli .env.ongtrieuphuchieu689-7u"
   },
   "dependencies": {
     "commander": "^14.0.0",
