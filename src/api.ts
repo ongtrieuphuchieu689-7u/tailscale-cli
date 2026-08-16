@@ -71,11 +71,11 @@ export class TailscaleApiClient {
   private oauthToken?: { value: string; expiresAt: number; key: string };
 
   constructor(config: ResolvedConfig, env: NodeJS.ProcessEnv = process.env) {
-    this.config = config;
     const accessToken = env.TS_ACCESS_TOKEN ?? env.TS_API_TOKEN;
     const apiKey = env.TS_API_KEY;
     const clientId = env.TS_OAUTH_CLIENT_ID;
     const clientSecret = env.TS_OAUTH_CLIENT_SECRET;
+    this.config = config;
 
     if (accessToken) this.auth = { source: 'bearer', token: accessToken };
     else if (apiKey) this.auth = { source: 'basic', token: apiKey };
@@ -96,7 +96,6 @@ export class TailscaleApiClient {
     const body = new URLSearchParams({ grant_type: 'client_credentials' });
     if (scopes.length) body.set('scope', scopes.join(' '));
     if (tags.length) body.set('tags', tags.join(' '));
-
     const basic = Buffer.from(`${this.auth.clientId}:${this.auth.clientSecret}`, 'utf8').toString('base64');
     const response = await fetch(OAUTH_TOKEN_URL, {
       method: 'POST',
@@ -107,8 +106,7 @@ export class TailscaleApiClient {
     const text = await response.text();
     if (!response.ok) throw new ApiError(`OAuth token request failed (${response.status}): ${text.slice(0, 300)}`, response.status, 'OAUTH_TOKEN_FAILED');
     const data = JSON.parse(text) as OAuthTokenResponse;
-    const expiresIn = Math.max(60, data.expires_in ?? 3600);
-    this.oauthToken = { value: data.access_token, expiresAt: now + expiresIn * 1000, key };
+    this.oauthToken = { value: data.access_token, expiresAt: now + Math.max(60, data.expires_in ?? 3600) * 1000, key };
     return data.access_token;
   }
 
@@ -120,13 +118,11 @@ export class TailscaleApiClient {
     if (this.auth.source === 'oauth') {
       headers.set('Authorization', `Bearer ${await this.oauthAccessToken(scopes, tags)}`);
     } else if (this.auth.token) {
-      if (this.auth.source === 'basic') {
-        headers.set('Authorization', `Basic ${Buffer.from(`${this.auth.token}:`, 'utf8').toString('base64')}`);
-      } else {
-        headers.set('Authorization', `Bearer ${this.auth.token}`);
-      }
+      headers.set('Authorization', this.auth.source === 'basic'
+        ? `Basic ${Buffer.from(`${this.auth.token}:`, 'utf8').toString('base64')}`
+        : `Bearer ${this.auth.token}`);
     } else {
-      throw new ApiError('No Tailscale API credential configured; set TS_API_KEY, TS_ACCESS_TOKEN, or TS_OAUTH_CLIENT_ID/TS_OAUTH_CLIENT_SECRET', 401, 'CREDENTIAL_NOT_FOUND');
+      throw new ApiError('No Tailscale API credential configured', 401, 'CREDENTIAL_NOT_FOUND');
     }
 
     let lastError: unknown;
@@ -137,17 +133,19 @@ export class TailscaleApiClient {
         if (response.ok) {
           if (!text) return { data: undefined as T, headers: response.headers, status: response.status };
           const contentType = response.headers.get('content-type') ?? '';
-          const data = contentType.includes('json') ? JSON.parse(text) as T : text as T;
-          return { data, headers: response.headers, status: response.status };
+          return {
+            data: contentType.includes('json') ? JSON.parse(text) as T : text as T,
+            headers: response.headers,
+            status: response.status,
+          };
         }
-        const message = (() => {
-          try {
-            const parsed = JSON.parse(text) as { message?: string };
-            return parsed.message ?? text;
-          } catch {
-            return text;
-          }
-        })();
+        let message = text;
+        try {
+          const parsed = JSON.parse(text) as { message?: string };
+          if (parsed.message) message = parsed.message;
+        } catch {
+          // Keep the raw server text.
+        }
         const error = new ApiError(message.slice(0, 500), response.status);
         if (!error.retryable || attempt === 2) throw error;
         lastError = error;
@@ -163,8 +161,7 @@ export class TailscaleApiClient {
   }
 
   private tailnet(): string {
-    if (!this.config.tailnet || this.config.tailnet === '-') return '-';
-    return encodePath(this.config.tailnet);
+    return this.config.tailnet && this.config.tailnet !== '-' ? encodePath(this.config.tailnet) : '-';
   }
 
   async listDevices(): Promise<Device[]> {
@@ -183,20 +180,11 @@ export class TailscaleApiClient {
 
   async createAuthKey(options: AuthKeyCreateOptions): Promise<CreatedAuthKey> {
     const body = {
-      capabilities: {
-        devices: {
-          create: {
-            reusable: options.reusable,
-            ephemeral: options.ephemeral,
-            preauthorized: options.preauthorized,
-            tags: options.tags,
-          },
-        },
-      },
+      capabilities: { devices: { create: { reusable: options.reusable, ephemeral: options.ephemeral, preauthorized: options.preauthorized, tags: options.tags } } },
       ...(options.expirySeconds ? { expirySeconds: options.expirySeconds } : {}),
     };
     const { data } = await this.request<CreatedAuthKey>(`/tailnet/${this.tailnet()}/keys`, { method: 'POST', body: JSON.stringify(body) }, ['auth_keys'], options.tags);
-    if (!data.key) throw new ApiError('Tailscale API created a key but did not return its secret', 502, 'AUTH_KEY_NOT_RETURNED');
+    if (!data.key) throw new ApiError('Tailscale API did not return the auth key secret', 502, 'AUTH_KEY_NOT_RETURNED');
     return data;
   }
 
@@ -207,6 +195,15 @@ export class TailscaleApiClient {
 
   async validatePolicy(policy: PolicyDocument): Promise<unknown> {
     const { data } = await this.request<unknown>(`/tailnet/${this.tailnet()}/acl/validate`, { method: 'POST', body: JSON.stringify(policy) }, ['policy_file:read']);
+    return data;
+  }
+
+  async validatePolicyText(content: string): Promise<unknown> {
+    const { data } = await this.request<unknown>(`/tailnet/${this.tailnet()}/acl/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/hujson', Accept: 'application/json' },
+      body: content,
+    }, ['policy_file:read']);
     return data;
   }
 
@@ -227,6 +224,6 @@ export class TailscaleApiClient {
   }
 }
 
-export function apiCredentialHint(): string {
+export function apiCredentialHint(env: NodeJS.ProcessEnv = process.env): string {
   return envFirst('TS_API_KEY', 'TS_ACCESS_TOKEN', 'TS_OAUTH_CLIENT_ID') ? 'configured' : 'missing';
 }
