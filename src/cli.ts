@@ -57,12 +57,40 @@ program
   .option(
     "--profile <profile>",
     "override the active profile (ci|container|vm|windows|funnel-app|subnet-router|exit-node|dev)",
+  )
+  .option(
+    "--client-secret <secret>",
+    "OAuth client secret (overrides TS_CLIENT_SECRET for this run; visible in process listings)",
+  )
+  .option(
+    "--client-id <id>",
+    "OAuth client id (overrides TS_CLIENT_ID for this run; visible in process listings)",
   );
+
+program.hook("preAction", () => applyCredentialFlags());
 
 interface CliOptions {
   json?: boolean;
   credentialEnv?: string;
   profile?: string;
+  clientSecret?: string;
+  clientId?: string;
+}
+
+function applyCredentialFlags(): void {
+  const opts = program.opts<CliOptions>();
+  if ((opts.clientSecret || opts.clientId) && opts.credentialEnv) {
+    throw new Error(
+      "CREDENTIAL_SELECTION_CONFLICT: choose either --credential-env or --client-secret/--client-id, not both",
+    );
+  }
+  if (opts.clientSecret) {
+    process.env.TS_CLIENT_SECRET = opts.clientSecret;
+    console.error(
+      "CLIENT_SECRET_VIA_FLAG: passing credentials on the command line is visible in process listings; prefer TS_CLIENT_SECRET",
+    );
+  }
+  if (opts.clientId) process.env.TS_CLIENT_ID = opts.clientId;
 }
 
 function configEnv(): NodeJS.ProcessEnv {

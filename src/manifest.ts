@@ -94,7 +94,7 @@ export const manifest = {
       "TS_API_KEY",
     ],
     override:
-      "--credential-env <name> to select one specific env var (required when detection is ambiguous)",
+      "--credential-env <name> to select one specific env var (required when detection is ambiguous); --client-secret/--client-id override TS_CLIENT_SECRET/TS_CLIENT_ID for one run (visible in process listings)",
     auto_detect: {
       source: "any env var whose value starts with tskey-client-",
     },
