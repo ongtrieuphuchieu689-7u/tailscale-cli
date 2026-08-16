@@ -43,7 +43,8 @@ jobs:
           echo "node $(node -v) npm $(npm -v)"
           tailsacle-cli --version
           opencode --version || true
-          which tailscale opencode tailsacle-cli
+          which opencode tailsacle-cli
+          which tailscale 2>/dev/null || echo "tailscale not on PATH yet (MSI installed by the CLI on first use)"
 
       - name: CLI must auto-detect the trust credential from the environment
         run: |
