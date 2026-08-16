@@ -25,10 +25,7 @@ export async function confirm(
 
 export async function promptCredential(): Promise<string | undefined> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return undefined;
-  if (
-    process.env.TS_CLI_YES === "true" ||
-    process.env.TS_CLI_YES === "1"
-  )
+  if (process.env.TS_CLI_YES === "true" || process.env.TS_CLI_YES === "1")
     return undefined;
   const rl = createInterface({ input, output });
   try {

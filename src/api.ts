@@ -474,9 +474,22 @@ export class TailscaleApiClient {
 export function apiCredentialHint(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  const namedTrust = [
+    "TS_TRUST_CREDENTIAL",
+    "TS_API_TRUST",
+    "TAILSCALE_TRUST_CREDENTIAL",
+    "TAILSCALE_API_TRUST",
+  ] as const;
+  const selectedName = env.TS_CREDENTIAL_ENV?.trim();
+  const trustValue = selectedName
+    ? env[selectedName]?.trim()
+    : env.TS_CLIENT_SECRET?.trim();
+  const hasTrustCredential = Boolean(
+    trustValue || namedTrust.some((name) => Boolean(env[name]?.trim())),
+  );
   const hasCredential = Boolean(
     envFirst("TS_API_KEY", "TS_ACCESS_TOKEN", "TS_API_TOKEN") ||
-    env.TS_CLIENT_SECRET?.trim() ||
+    hasTrustCredential ||
     (env.TS_OAUTH_CLIENT_ID && env.TS_OAUTH_CLIENT_SECRET) ||
     (env.TS_CLIENT_ID && env.TS_CLIENT_SECRET),
   );

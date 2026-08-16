@@ -32,18 +32,37 @@ export function resolveCredential(
   const exactTrustMatches = Object.entries(env).filter(([, value]) =>
     value?.startsWith("tskey-client-"),
   );
+  const selectedName = env.TS_CREDENTIAL_ENV?.trim();
   const explicit = env.TS_CLIENT_SECRET?.trim();
   const named = namedCredentialEnv.find((name) => Boolean(env[name]?.trim()));
-  const selected = explicit
-    ? (["TS_CLIENT_SECRET", explicit] as const)
-    : named
-      ? ([named, env[named]!.trim()] as const)
-      : exactTrustMatches.length === 1
-        ? ([exactTrustMatches[0]![0], exactTrustMatches[0]![1]!] as const)
-        : undefined;
+  const selected = selectedName
+    ? env[selectedName]?.trim()
+      ? ([selectedName, env[selectedName]!.trim()] as const)
+      : undefined
+    : explicit
+      ? (["TS_CLIENT_SECRET", explicit] as const)
+      : named
+        ? ([named, env[named]!.trim()] as const)
+        : exactTrustMatches.length === 1
+          ? ([exactTrustMatches[0]![0], exactTrustMatches[0]![1]!] as const)
+          : undefined;
 
   const candidates = exactTrustMatches.map(([name]) => name);
-  if (exactTrustMatches.length > 1 && !explicit && !named) {
+  if (selectedName) {
+    if (!env[selectedName]?.trim())
+      return {
+        found: false,
+        candidates: [selectedName],
+        error: "CREDENTIAL_ENV_MISSING",
+      };
+    if (!env[selectedName]!.trim().startsWith("tskey-client-"))
+      return {
+        found: false,
+        candidates: [selectedName],
+        error: "CREDENTIAL_FORMAT_UNSUPPORTED",
+      };
+  }
+  if (exactTrustMatches.length > 1 && !selectedName && !explicit && !named) {
     return { found: false, candidates, error: "MULTIPLE_CREDENTIALS" };
   }
   if (!selected) {
@@ -109,7 +128,9 @@ export function loadConfigFile(
   for (const candidate of candidates) {
     try {
       const raw = readFileSync(candidate, "utf8");
-      const cleaned = raw.replace(/\/\/[^\n]*/g, "").replace(/,\s*([\]}])/g, "$1");
+      const cleaned = raw
+        .replace(/\/\/[^\n]*/g, "")
+        .replace(/,\s*([\]}])/g, "$1");
       const parsed = JSON.parse(cleaned) as ConfigFile;
       return { config: parsed, source: candidate };
     } catch {

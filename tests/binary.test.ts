@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { detectArch, cacheBinDir, cacheBinPath } from "../src/binary.js";
 
 describe("binary detection and cache layout", () => {
@@ -9,14 +12,16 @@ describe("binary detection and cache layout", () => {
   });
 
   it("honours TS_BIN_DIR for the cache directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tscli-bin-"));
     const previous = process.env.TS_BIN_DIR;
-    process.env.TS_BIN_DIR = "/tmp/opencode/tsbin";
+    process.env.TS_BIN_DIR = dir;
     try {
-      expect(cacheBinDir()).toBe("/tmp/opencode/tsbin");
+      expect(cacheBinDir()).toBe(dir);
       expect(cacheBinPath()).toMatch(/[\\/]tailscale(\.exe)?$/);
     } finally {
       if (previous === undefined) delete process.env.TS_BIN_DIR;
       else process.env.TS_BIN_DIR = previous;
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

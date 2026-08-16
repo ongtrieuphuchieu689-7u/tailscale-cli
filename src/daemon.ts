@@ -170,9 +170,9 @@ function daemonPidFile(): string {
 
 export function readTrackedDaemon(): TrackedDaemon | undefined {
   try {
-    const parsed = JSON.parse(readFileSync(daemonPidFile(), "utf8")) as Partial<
-      TrackedDaemon
-    >;
+    const parsed = JSON.parse(
+      readFileSync(daemonPidFile(), "utf8"),
+    ) as Partial<TrackedDaemon>;
     if (typeof parsed.pid !== "number" || !Number.isInteger(parsed.pid))
       return undefined;
     return {

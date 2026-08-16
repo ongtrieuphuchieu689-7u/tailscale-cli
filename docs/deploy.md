@@ -7,10 +7,13 @@ Serve/Funnel, and can run guarded cleanup. Everything below is also reflected by
 ## 1. Credential and tag plan
 
 Credential precedence (highest first): `TS_AUTH_KEY` → OAuth trust credential
-(`TS_CLIENT_SECRET` or any `tskey-client-…` env var, selected with `--credential-env`) →
-OAuth client pair (`TS_OAUTH_CLIENT_ID` + `TS_OAUTH_CLIENT_SECRET`) → `TS_ACCESS_TOKEN`
+(`TS_CLIENT_SECRET` or any `tskey-client-…` env var, selected explicitly with
+`--credential-env`, `TS_CREDENTIAL_ENV`, or the config file `credentialEnv` key) → OAuth
+client pair (`TS_OAUTH_CLIENT_ID` + `TS_OAUTH_CLIENT_SECRET`) → `TS_ACCESS_TOKEN`
 /`TS_API_TOKEN` → `TS_API_KEY`. `doctor --detect-credentials` prints the resolved source
-(masked) with `auth.kind`.
+(masked) with `auth.kind`. An explicit `TS_CREDENTIAL_ENV`/`credentialEnv` selection beats
+`TS_CLIENT_SECRET` and auto-detection; a selected env var that is unset fails with
+`CREDENTIAL_ENV_MISSING` instead of silently falling back.
 
 Tags:
 
@@ -41,8 +44,11 @@ Ports are restricted to 443/8443/10000.
 
 `resolveKeyExpiry` accepts `max`, `unlimited` and positive seconds. `max`/`unlimited` map to
 the **documented 90-day ceiling** — there is no API endpoint that reports the real server
-limit, so the CLI states the ceiling and warns. Override per run with
-`deploy --key-expiry 3600` or `TS_KEY_EXPIRY`.
+limit, so the CLI labels the value as a documented ceiling (`KEY_EXPIRY_MAX`) and never
+claims it is the discovered server maximum. `unlimited` additionally warns
+(`KEY_EXPIRY_UNLIMITED`) that it is capped, and explicit seconds above the ceiling are
+clamped with `KEY_EXPIRY_CLAMPED`. Override per run with `deploy --key-expiry 3600` or
+`TS_KEY_EXPIRY`.
 
 ## 4. Cleanup
 

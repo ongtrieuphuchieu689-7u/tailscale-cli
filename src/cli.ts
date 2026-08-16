@@ -27,7 +27,12 @@ import {
   latestWindowsInstallInfo,
   updateCacheBinary,
 } from "./binary.js";
-import { ensureDaemon, inspectDaemon, daemonStatus, stopUserspaceDaemon } from "./daemon.js";
+import {
+  ensureDaemon,
+  inspectDaemon,
+  daemonStatus,
+  stopUserspaceDaemon,
+} from "./daemon.js";
 import { manifest } from "./manifest.js";
 import {
   ensureFunnelAccess,
@@ -38,6 +43,7 @@ import {
 } from "./policy.js";
 import type { ResolvedConfig } from "./types.js";
 import { confirm, promptCredential } from "./interactive.js";
+import { verifyEndpointReachable } from "./verify.js";
 import type { Envelope } from "./types.js";
 
 function packageVersion(): string {
@@ -120,18 +126,36 @@ function configEnv(): NodeJS.ProcessEnv {
     const { config } = loaded;
     if (config.profile && !env.TS_PROFILE) fileEnv.TS_PROFILE = config.profile;
     if (config.tailnet && !env.TS_TAILNET) fileEnv.TS_TAILNET = config.tailnet;
-    if (config.hostname && !env.TS_HOSTNAME) fileEnv.TS_HOSTNAME = config.hostname;
-    if (config.tags?.length && !env.TS_TAGS) fileEnv.TS_TAGS = config.tags.join(",");
-    if (config.ssh !== undefined && env.TS_SSH === undefined) fileEnv.TS_SSH = String(config.ssh);
-    if (config.keyExpiry && !env.TS_KEY_EXPIRY) fileEnv.TS_KEY_EXPIRY = config.keyExpiry;
-    if (config.preauthorized !== undefined && env.TS_PREAUTHORIZED === undefined) fileEnv.TS_PREAUTHORIZED = String(config.preauthorized);
-    if (config.reusable !== undefined && env.TS_REUSABLE === undefined) fileEnv.TS_REUSABLE = String(config.reusable);
-    if (config.ephemeral !== undefined && env.TS_EPHEMERAL === undefined) fileEnv.TS_EPHEMERAL = String(config.ephemeral);
-    if (config.acceptDns !== undefined && env.TS_ACCEPT_DNS === undefined) fileEnv.TS_ACCEPT_DNS = String(config.acceptDns);
-    if (config.acceptRoutes !== undefined && env.TS_ACCEPT_ROUTES === undefined) fileEnv.TS_ACCEPT_ROUTES = String(config.acceptRoutes);
-    if (config.cleanupAfter !== undefined && env.TS_CLEANUP_OFFLINE_AFTER === undefined) fileEnv.TS_CLEANUP_OFFLINE_AFTER = String(config.cleanupAfter);
-    if (config.credentialEnv && !env.TS_CREDENTIAL_ENV) fileEnv.TS_CREDENTIAL_ENV = config.credentialEnv;
-    if (config.tagOwner?.length && !env.TS_TAG_OWNER) fileEnv.TS_TAG_OWNER = config.tagOwner.join(",");
+    if (config.hostname && !env.TS_HOSTNAME)
+      fileEnv.TS_HOSTNAME = config.hostname;
+    if (config.tags?.length && !env.TS_TAGS)
+      fileEnv.TS_TAGS = config.tags.join(",");
+    if (config.ssh !== undefined && env.TS_SSH === undefined)
+      fileEnv.TS_SSH = String(config.ssh);
+    if (config.keyExpiry && !env.TS_KEY_EXPIRY)
+      fileEnv.TS_KEY_EXPIRY = config.keyExpiry;
+    if (
+      config.preauthorized !== undefined &&
+      env.TS_PREAUTHORIZED === undefined
+    )
+      fileEnv.TS_PREAUTHORIZED = String(config.preauthorized);
+    if (config.reusable !== undefined && env.TS_REUSABLE === undefined)
+      fileEnv.TS_REUSABLE = String(config.reusable);
+    if (config.ephemeral !== undefined && env.TS_EPHEMERAL === undefined)
+      fileEnv.TS_EPHEMERAL = String(config.ephemeral);
+    if (config.acceptDns !== undefined && env.TS_ACCEPT_DNS === undefined)
+      fileEnv.TS_ACCEPT_DNS = String(config.acceptDns);
+    if (config.acceptRoutes !== undefined && env.TS_ACCEPT_ROUTES === undefined)
+      fileEnv.TS_ACCEPT_ROUTES = String(config.acceptRoutes);
+    if (
+      config.cleanupAfter !== undefined &&
+      env.TS_CLEANUP_OFFLINE_AFTER === undefined
+    )
+      fileEnv.TS_CLEANUP_OFFLINE_AFTER = String(config.cleanupAfter);
+    if (config.credentialEnv && !env.TS_CREDENTIAL_ENV)
+      fileEnv.TS_CREDENTIAL_ENV = config.credentialEnv;
+    if (config.tagOwner?.length && !env.TS_TAG_OWNER)
+      fileEnv.TS_TAG_OWNER = config.tagOwner.join(",");
     env = fileEnv;
   }
   if (opts.profile) {
@@ -154,19 +178,19 @@ function configEnv(): NodeJS.ProcessEnv {
 
 function resolvedCredentialEnv(): string | undefined {
   const opts = program.opts<CliOptions>();
-  if (opts.credentialEnv) {
-    const value = process.env[opts.credentialEnv]?.trim();
+  const env = configEnv();
+  const name = opts.credentialEnv ?? env.TS_CREDENTIAL_ENV?.trim();
+  if (name) {
+    const value = env[name]?.trim();
     if (!value)
-      throw new Error(
-        `CREDENTIAL_ENV_MISSING: env ${opts.credentialEnv} is not set`,
-      );
+      throw new Error(`CREDENTIAL_ENV_MISSING: env ${name} is not set`);
     if (!value.startsWith("tskey-client-"))
       throw new Error(
-        `CREDENTIAL_FORMAT_UNSUPPORTED: env ${opts.credentialEnv} is not a tskey-client- trust credential`,
+        `CREDENTIAL_FORMAT_UNSUPPORTED: env ${name} is not a tskey-client- trust credential`,
       );
-    return opts.credentialEnv;
+    return name;
   }
-  return credentialEnvName();
+  return credentialEnvName(env);
 }
 
 function envTagOwner(): string[] | undefined {
@@ -262,7 +286,8 @@ function exitCodeFor(error: unknown): number {
   return 1;
 }
 
-const DOCS_BASE = "https://github.com/ongtrieuphuchieu689-7u/tailscale-cli/blob/main/docs";
+const DOCS_BASE =
+  "https://github.com/ongtrieuphuchieu689-7u/tailscale-cli/blob/main/docs";
 const ERROR_DOCS: Record<string, string> = {
   CREDENTIAL_NOT_FOUND: `${DOCS_BASE}/user_requirement.md#credential-resolution`,
   CREDENTIAL_AMBIGUOUS: `${DOCS_BASE}/user_requirement.md#credential-resolution`,
@@ -275,16 +300,21 @@ const ERROR_DOCS: Record<string, string> = {
   FUNNEL_PORT_UNSUPPORTED: `${DOCS_BASE}/user_requirement.md#funnel`,
   FUNNEL_ATTR_REQUIRED: `${DOCS_BASE}/user_requirement.md#funnel`,
   FUNNEL_DNS_NOT_PUBLISHED: `${DOCS_BASE}/user_requirement.md#funnel`,
+  FUNNEL_ENDPOINT_UNREACHABLE: `${DOCS_BASE}/user_requirement.md#funnel`,
   DNS_MAGICDNS_CONFIRMATION_REQUIRED: `${DOCS_BASE}/user_requirement.md#dns`,
   POLICY_FILE_REQUIRED: `${DOCS_BASE}/user_requirement.md#policy`,
   POLICY_VERIFY_FAILED: `${DOCS_BASE}/user_requirement.md#policy`,
   PRIVILEGE_REQUIRED: `${DOCS_BASE}/user_requirement.md#privileges`,
 };
 
-async function credentialFromOptions(): Promise<ReturnType<typeof resolveCredential>> {
+async function credentialFromOptions(): Promise<
+  ReturnType<typeof resolveCredential>
+> {
   const opts = program.opts<CliOptions>();
-  if (!opts.credentialEnv) {
-    const resolution = resolveCredential();
+  const env = configEnv();
+  const name = opts.credentialEnv ?? env.TS_CREDENTIAL_ENV?.trim();
+  if (!name) {
+    const resolution = resolveCredential(env);
     if (!resolution.found && resolution.error === "CREDENTIAL_NOT_FOUND") {
       const prompted = await promptCredential();
       if (prompted && prompted.startsWith("tskey-client-")) {
@@ -299,22 +329,22 @@ async function credentialFromOptions(): Promise<ReturnType<typeof resolveCredent
     }
     return resolution;
   }
-  const value = process.env[opts.credentialEnv]?.trim();
+  const value = env[name]?.trim();
   if (!value)
     return {
       found: false,
-      candidates: [opts.credentialEnv],
+      candidates: [name],
       error: "CREDENTIAL_ENV_MISSING",
     };
   if (!value.startsWith("tskey-client-"))
     return {
       found: false,
-      candidates: [opts.credentialEnv],
+      candidates: [name],
       error: "CREDENTIAL_FORMAT_UNSUPPORTED",
     };
   return {
     found: true,
-    source: opts.credentialEnv,
+    source: name,
     masked: maskSecret(value),
     candidates: [],
   };
@@ -322,25 +352,27 @@ async function credentialFromOptions(): Promise<ReturnType<typeof resolveCredent
 
 function authFromOptions(): ReturnType<typeof resolveAuth> {
   const opts = program.opts<CliOptions>();
-  if (!opts.credentialEnv) return resolveAuth(configEnv());
-  const value = process.env[opts.credentialEnv]?.trim();
+  const env = configEnv();
+  const name = opts.credentialEnv ?? env.TS_CREDENTIAL_ENV?.trim();
+  if (!name) return resolveAuth(env);
+  const value = env[name]?.trim();
   if (!value)
     return {
       found: false,
-      candidates: [opts.credentialEnv],
+      candidates: [name],
       error: "CREDENTIAL_ENV_MISSING",
     };
   if (!value.startsWith("tskey-client-"))
     return {
       found: false,
-      candidates: [opts.credentialEnv],
+      candidates: [name],
       error: "CREDENTIAL_FORMAT_UNSUPPORTED",
     };
   return {
     found: true,
     auth: {
       kind: "oauth-trust",
-      source: opts.credentialEnv,
+      source: name,
       masked: maskSecret(value),
     },
     candidates: [],
@@ -639,7 +671,10 @@ program
 program
   .command("status")
   .description("Show local Tailscale status")
-  .option("--show-resolution", "include credential resolution source and masked value")
+  .option(
+    "--show-resolution",
+    "include credential resolution source and masked value",
+  )
   .action(async (options: { showResolution?: boolean }) => {
     const start = performance.now();
     try {
@@ -867,7 +902,7 @@ function parseFunnelExpose(value: string): {
 program
   .command("funnel")
   .description(
-    "Configure Tailscale Funnel for a target (auto-detects target and verifies public DNS)",
+    "Configure Tailscale Funnel for a target (auto-detects target and verifies public DNS plus the live TLS/TCP endpoint)",
   )
   .argument(
     "[target]",
@@ -883,7 +918,10 @@ program
   .option("--yes")
   .option("--apply-policy")
   .option("--enable-https")
-  .option("--verify-timeout <sec>", "DNS propagation timeout")
+  .option(
+    "--verify-timeout <sec>",
+    "public DNS and live-endpoint verification timeout",
+  )
   .action(async (target: string | undefined, options: FunnelOptions) => {
     const start = performance.now();
     try {
@@ -931,6 +969,18 @@ program
           throw new Error(
             `FUNNEL_DNS_NOT_PUBLISHED: no public DNS record for ${name ?? "the funnel hostname"} within ${verifySeconds}s (tried ${verify.attempts} times)`,
           );
+        const endpoint = name
+          ? await verifyEndpointReachable(
+              name,
+              [Number(publicPort)],
+              "tcp",
+              verifySeconds,
+            )
+          : { ok: false as const, verifiedPorts: [], attempts: 0 };
+        if (!endpoint.ok)
+          throw new Error(
+            `FUNNEL_ENDPOINT_UNREACHABLE: public DNS resolved for ${name} but the TCP endpoint ${name}:${publicPort} did not accept connections within ${verifySeconds}s (tried ${endpoint.attempts} times${endpoint.lastError ? `; last error: ${endpoint.lastError}` : ""})`,
+          );
         emit(
           "funnel",
           {
@@ -948,6 +998,8 @@ program
             verified: true,
             dnsPropagated: true,
             dnsAttempts: verify.attempts,
+            tcpVerified: true,
+            verifyAttempts: endpoint.attempts,
           },
           warnings,
           ["configure Funnel (TCP)", "verify public listener & DNS"],
@@ -1052,6 +1104,24 @@ program
         throw new Error(
           `FUNNEL_DNS_NOT_PUBLISHED: no public DNS record for ${name ?? "the funnel hostname"} within ${verifySeconds}s (tried ${verify.attempts} times)`,
         );
+      const publicPorts = [
+        ...new Set(
+          exposed.length
+            ? exposed.map((exposure) => exposure.https)
+            : [httpsPort],
+        ),
+      ];
+      const endpoint = name
+        ? await verifyEndpointReachable(name, publicPorts, "tls", verifySeconds)
+        : { ok: false as const, verifiedPorts: [], attempts: 0 };
+      if (!endpoint.ok) {
+        const unreachable = publicPorts.filter(
+          (port) => !endpoint.verifiedPorts.includes(port),
+        );
+        throw new Error(
+          `FUNNEL_ENDPOINT_UNREACHABLE: public DNS resolved for ${name} but TLS/HTTPS was not reachable on ${unreachable.map((port) => `${name}:${port}`).join(", ")} within ${verifySeconds}s (tried ${endpoint.attempts} times${endpoint.lastError ? `; last error: ${endpoint.lastError}` : ""})`,
+        );
+      }
       const baseUrl = name ? `https://${name}` : undefined;
       const pathFor = (value: string | undefined): string => value ?? "/";
       const exposures = exposed.length
@@ -1082,8 +1152,12 @@ program
               }
             : {}),
           exposures,
+          verified: true,
           dnsPropagated: true,
           dnsAttempts: verify.attempts,
+          tlsVerified: true,
+          tlsVerifiedPorts: endpoint.verifiedPorts,
+          verifyAttempts: endpoint.attempts,
         },
         warnings,
         [
@@ -1145,50 +1219,56 @@ program
   .option("--enable-magicdns")
   .option("--dry-run")
   .option("--yes")
-  .action(async (options: { enableMagicdns?: boolean; dryRun?: boolean; yes?: boolean }) => {
-    const start = performance.now();
-    try {
-      const api = new TailscaleApiClient(
-        resolveConfig(configEnv()),
-        process.env,
-        resolvedCredentialEnv(),
-      );
-      if (options.enableMagicdns) {
-        const approved = await confirm(
-          "Enable MagicDNS on the tailnet?",
-          Boolean(options.yes),
+  .action(
+    async (options: {
+      enableMagicdns?: boolean;
+      dryRun?: boolean;
+      yes?: boolean;
+    }) => {
+      const start = performance.now();
+      try {
+        const api = new TailscaleApiClient(
+          resolveConfig(configEnv()),
+          process.env,
+          resolvedCredentialEnv(),
         );
-        if (!approved)
-          throw new Error(
-            "DNS_MAGICDNS_CONFIRMATION_REQUIRED: pass --yes to enable MagicDNS",
+        if (options.enableMagicdns) {
+          const approved = await confirm(
+            "Enable MagicDNS on the tailnet?",
+            Boolean(options.yes),
           );
-        if (options.dryRun) {
+          if (!approved)
+            throw new Error(
+              "DNS_MAGICDNS_CONFIRMATION_REQUIRED: pass --yes to enable MagicDNS",
+            );
+          if (options.dryRun) {
+            emit(
+              "dns",
+              { magicDNSEnabled: true, dryRun: true },
+              [],
+              [],
+              [],
+              start,
+            );
+            return;
+          }
+          await api.enableMagicDns();
           emit(
             "dns",
-            { magicDNSEnabled: true, dryRun: true },
+            { magicDNSEnabled: true },
             [],
-            [],
+            ["enable MagicDNS"],
             [],
             start,
           );
           return;
         }
-        await api.enableMagicDns();
-        emit(
-          "dns",
-          { magicDNSEnabled: true },
-          [],
-          ["enable MagicDNS"],
-          [],
-          start,
-        );
-        return;
+        emit("dns", await api.getDns(), [], [], [], start);
+      } catch (error) {
+        fail("dns", error, start);
       }
-      emit("dns", await api.getDns(), [], [], [], start);
-    } catch (error) {
-      fail("dns", error, start);
-    }
-  });
+    },
+  );
 
 program
   .command("policy")

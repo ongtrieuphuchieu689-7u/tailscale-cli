@@ -10,3 +10,6 @@ policy.provision-*.bak
 
 gh-workspace.jsonc
 .env.*
+opencode.json
+opencode-serve.log
+serve-pass.txt

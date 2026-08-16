@@ -16,20 +16,42 @@ import {
 } from "./policy.js";
 import { ensureDaemon } from "./daemon.js";
 
-const MAX_AUTH_KEY_SECONDS = 90 * 24 * 60 * 60;
-const MAX_AUTH_KEY_WARNING =
-  "KEY_EXPIRY_MAX: using the documented Tailscale auth-key limit of 90 days; this is the auth-key expiry used to join, not the node key-expiry policy";
+export const DOCUMENTED_AUTH_KEY_CEILING_SECONDS = 90 * 24 * 60 * 60;
+const KEY_EXPIRY_MAX_WARNING =
+  "KEY_EXPIRY_MAX: max maps to the documented 90-day auth-key ceiling; no API endpoint reports the real server maximum, so a larger value is never claimed (this is the auth-key expiry used to join, not the node key-expiry policy)";
+const KEY_EXPIRY_UNLIMITED_WARNING =
+  "KEY_EXPIRY_UNLIMITED: unlimited is capped at the documented 90-day auth-key ceiling; Tailscale does not offer truly unlimited auth keys";
 
 export function resolveKeyExpiry(configured: string): number {
   const raw = (configured ?? "").trim().toLowerCase();
   if (raw === "" || raw === "max" || raw === "unlimited")
-    return MAX_AUTH_KEY_SECONDS;
+    return DOCUMENTED_AUTH_KEY_CEILING_SECONDS;
   const seconds = Number(raw);
   if (!Number.isFinite(seconds) || seconds <= 0)
     throw new Error(
       'KEY_EXPIRY_INVALID: TS_KEY_EXPIRY must be "max" or a positive number of seconds',
     );
   return seconds;
+}
+
+export function resolveKeyExpiryPlan(
+  configured: string,
+  source: string,
+): { seconds: number; warnings: string[] } {
+  const raw = (configured ?? "").trim().toLowerCase();
+  const seconds = resolveKeyExpiry(configured);
+  const warnings: string[] = [];
+  if (raw === "" || raw === "max") {
+    if (source === "default") warnings.push(KEY_EXPIRY_MAX_WARNING);
+  } else if (raw === "unlimited") {
+    warnings.push(KEY_EXPIRY_UNLIMITED_WARNING);
+  } else if (seconds > DOCUMENTED_AUTH_KEY_CEILING_SECONDS) {
+    warnings.push(
+      `KEY_EXPIRY_CLAMPED: ${seconds}s exceeds the documented 90-day auth-key ceiling; using the ceiling instead`,
+    );
+    return { seconds: DOCUMENTED_AUTH_KEY_CEILING_SECONDS, warnings };
+  }
+  return { seconds, warnings };
 }
 
 function truthy(value: string | undefined): boolean {
@@ -84,8 +106,9 @@ function buildUpArgs(config: ResolvedConfig): string[] {
     `--hostname=${config.hostname}`,
     `--accept-dns=${config.acceptDns}`,
     `--accept-routes=${config.acceptRoutes}`,
-    config.ssh ? "--ssh" : "--ssh=false",
   ];
+  if (process.platform !== "win32")
+    args.push(config.ssh ? "--ssh" : "--ssh=false");
   if (config.profile === "exit-node") args.push("--advertise-exit-node");
   if (config.profile === "subnet-router" && process.env.TS_ADVERTISE_ROUTES)
     args.push(`--advertise-routes=${process.env.TS_ADVERTISE_ROUTES}`);
@@ -221,9 +244,16 @@ export async function deploy(
   else if (daemon.actions.length)
     warnings.push(`DAEMON_STARTED: ${daemon.actions.join("; ")}`);
   const exposures = resolveExposures(options.expose, options.funnel);
-  const expirySeconds = resolveKeyExpiry(config.keyExpiry);
-  if (config.source.keyExpiry === "default")
-    warnings.push(MAX_AUTH_KEY_WARNING);
+  const expiryPlan = resolveKeyExpiryPlan(
+    config.keyExpiry,
+    config.source.keyExpiry ?? "",
+  );
+  const expirySeconds = expiryPlan.seconds;
+  warnings.push(...expiryPlan.warnings);
+  if (process.platform === "win32" && config.ssh === true)
+    warnings.push(
+      "SSH_DISABLED_ON_WINDOWS: the Tailscale SSH server is not supported on Windows; --ssh was ignored",
+    );
   const { tags: deploymentTags, autoTagged } = resolveTags(config);
   if (autoTagged)
     warnings.push(

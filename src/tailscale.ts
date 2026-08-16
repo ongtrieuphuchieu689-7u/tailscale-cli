@@ -147,7 +147,9 @@ export class TailscaleLocal {
         if (!/failed to connect to local tailscaled/i.test(message))
           throw error;
         lastError = error;
-        await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+        await new Promise((resolve) =>
+          setTimeout(resolve, 1500 * (attempt + 1)),
+        );
       }
     }
     throw lastError;

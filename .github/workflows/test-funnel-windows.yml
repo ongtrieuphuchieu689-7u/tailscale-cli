@@ -1,0 +1,140 @@
+name: Test Funnel (Windows npmjs)
+
+on:
+  workflow_dispatch:
+    inputs:
+      keepalive_minutes:
+        description: Minutes to keep the funnel tunnel alive (job max is 360)
+        required: false
+        type: number
+        default: 120
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  funnel-test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    env:
+      TS_CLIENT_SECRET: ${{ secrets.TS_CLIENT_SECRET || vars.TS_CLIENT_SECRET }}
+      TS_TAILNET: ${{ secrets.TS_TAILNET || vars.TS_TAILNET || 'tailadac87.ts.net' }}
+      TS_HOSTNAME: opencode-ci-win
+      TS_TAGS: opencode
+      TS_EPHEMERAL: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      # No tailscale install step: tailsacle-cli downloads and installs the
+      # official Windows MSI itself on first use (needs an admin shell, which
+      # windows-latest runners run as by default) and tailscaled runs as the
+      # installed Windows service.
+      - name: Install newest opencode-ai and tailsacle-cli from npmjs
+        run: |
+          npm install -g opencode-ai@latest tailsacle-cli@latest
+          echo "node $(node -v) npm $(npm -v)"
+          tailsacle-cli --version
+          opencode --version || true
+          which opencode tailsacle-cli
+          which tailscale 2>/dev/null || echo "tailscale not on PATH yet (MSI installed by the CLI on first use)"
+
+      - name: CLI must auto-detect the trust credential from the environment
+        run: |
+          OUT="$(tailsacle-cli doctor --detect-credentials --json)"
+          echo "$OUT"
+          echo "$OUT" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const c=JSON.parse(d).resolved.credential;if(!c||!c.found){console.error('CREDENTIAL_NOT_AUTO_DETECTED');process.exit(1)}console.log('auto-detected source:',c.source,'masked:',c.masked)})"
+          echo "api credential hint: $(echo "$OUT" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).resolved.apiCredential))")"
+
+      - name: Prune stale offline test node from a previous run
+        env:
+          TS_CLEANUP_OFFLINE_AFTER: "1"
+        run: |
+          tailsacle-cli cleanup --yes --json
+
+      - name: Verify API auto-auth and join the tailnet (installs MSI + service)
+        run: |
+          tailsacle-cli dns --json
+          OUT="$(tailsacle-cli deploy --yes --apply-policy --enable-https --cleanup --json)"
+          echo "$OUT"
+          echo "$OUT" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const j=JSON.parse(d);const dev=j.resolved&&j.resolved.device;const dns=dev&&dev.dnsName&&dev.dnsName.replace(/\.\s*$/,'');if(!dns){console.error('NO_DNS_NAME');process.exit(1)}const base='https://'+dns+'/';require('fs').appendFileSync(process.env.GITHUB_ENV,'FUNNEL_BASE='+base+'\n');console.log('funnel_base='+base)})"
+
+      - name: Configure opencode for the workspace and start opencode serve
+        shell: pwsh
+        run: |
+          @'
+          {
+            "$schema": "https://opencode.ai/config.json",
+            "theme": { "mode": "dark" }
+          }
+          '@ | Set-Content -Encoding utf8 opencode.json
+          $pass = node -e "console.log(require('node:crypto').randomBytes(8).toString('hex'))"
+          Set-Content -NoNewline -Encoding ascii serve-pass.txt $pass
+          $env:OPENCODE_SERVE_PASS = $pass
+          Write-Host "opencode workspace: $(Get-Location)"
+          Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','opencode serve --port 4096' -RedirectStandardOutput opencode-serve.log -RedirectStandardError opencode-serve.err.log -WindowStyle Hidden
+          $ready = $false
+          for ($i = 0; $i -lt 90; $i++) {
+            try { Invoke-WebRequest -Uri 'http://127.0.0.1:4096/' -UseBasicParsing -TimeoutSec 5 | Out-Null; $ready = $true; break } catch { Start-Sleep -Seconds 2 }
+          }
+          if (-not $ready) {
+            Write-Host "serve failed to start"
+            if (Test-Path opencode-serve.log) { Get-Content opencode-serve.log -Tail 40 }
+            if (Test-Path opencode-serve.err.log) { Get-Content opencode-serve.err.log -Tail 40 }
+            exit 1
+          }
+          Write-Host "opencode serve ready on :4096"
+
+      - name: Publish Funnel tunnel and print access info
+        run: |
+          tailsacle-cli funnel http://127.0.0.1:4096 --https 443 --yes --apply-policy --enable-https --verify-timeout 180 --json
+          echo
+          echo "==================== ACCESS ===================="
+          echo "OpenCode UI : $FUNNEL_BASE"
+          echo "Serve pass  : $(cat serve-pass.txt)"
+          echo "CLI version : $(tailsacle-cli --version)"
+          echo "Node name   : $TS_HOSTNAME"
+          echo "==============================================="
+          {
+            echo "### OpenCode funnel (Windows test run)"
+            echo ""
+            echo "\`$FUNNEL_BASE\`"
+            echo ""
+            echo "- serve pass: \`$(cat serve-pass.txt)\`"
+            echo "- job: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keepalive (supervise serve, hold the tunnel open)
+        shell: pwsh
+        run: |
+          $keep = ((${{ inputs.keepalive_minutes }} * 60) - 60)
+          if ($keep -lt 60) { $keep = 60 }
+          $deadline = (Get-Date).AddSeconds($keep)
+          $last = 0
+          Write-Host "keeping alive until $($deadline.ToString('o'))"
+          while ((Get-Date) -lt $deadline) {
+            $ok = $true
+            try { Invoke-WebRequest -Uri 'http://127.0.0.1:4096/' -UseBasicParsing -TimeoutSec 10 | Out-Null } catch { $ok = $false }
+            if (-not $ok) {
+              Write-Host "[keepalive] serve down, restarting $(Get-Date -Format o)"
+              $env:OPENCODE_SERVE_PASS = (Get-Content serve-pass.txt -Raw).Trim()
+              Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','opencode serve --port 4096' -RedirectStandardOutput opencode-serve.log -RedirectStandardError opencode-serve.err.log -WindowStyle Hidden
+            }
+            $markers = [int]((Get-Date -UFormat %s) / 600)
+            if ($markers -gt $last) {
+              Write-Host "[keepalive] heartbeat $(Get-Date -Format o) tunnel $env:FUNNEL_BASE"
+              $last = $markers
+            }
+            Start-Sleep -Seconds 60
+          }
+          Write-Host "keepalive finished; tunnel closes when the job ends"
+          if (Test-Path 'C:\Program Files\Tailscale\tailscale.exe') {
+            & 'C:\Program Files\Tailscale\tailscale.exe' funnel off 2>$null
+          }

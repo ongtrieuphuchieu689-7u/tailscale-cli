@@ -128,7 +128,7 @@ Cleanup is restricted to devices that are offline beyond `TS_CLEANUP_OFFLINE_AFT
 | `TS_ACCEPT_DNS` | Accept DNS, default `true` |
 | `TS_ACCEPT_ROUTES` | Accept subnet/exit routes when enabled by profile |
 | `TS_PREAUTHORIZED` | Create pre-authorized auth keys, default `true` |
-| `TS_KEY_EXPIRY` | Auth-key lifetime in seconds, `max` or `unlimited` (default `max`). `max`/`unlimited` use the documented 90-day ceiling — this is NOT an API-discovered maximum. Set `TS_KEY_EXPIRY=3600` to pin a shorter lifetime. This is the auth-key expiry, not the node key-expiry policy |
+| `TS_KEY_EXPIRY` | Auth-key lifetime in seconds, `max` or `unlimited` (default `max`). `max`/`unlimited` use the documented 90-day ceiling — this is NOT an API-discovered maximum. Set `TS_KEY_EXPIRY=3600` to pin a shorter lifetime; explicit values above the ceiling are clamped with a warning. This is the auth-key expiry, not the node key-expiry policy |
 | `TS_EPHEMERAL` | Override ephemeral node behavior (ephemeral nodes cannot publish public Funnel DNS) |
 | `TS_REUSABLE` | Override auth-key reuse behavior |
 | `TS_TAG_BASE` | Base for the deterministic auto-tag when `TS_TAGS` is unset (`tag:<base>`; on CI the `GITHUB_REPOSITORY`/`GITLAB_PROJECT_PATH` is preferred) |
@@ -136,6 +136,7 @@ Cleanup is restricted to devices that are offline beyond `TS_CLEANUP_OFFLINE_AFT
 | `TS_API_KEY` | Tailscale API key |
 | `TS_ACCESS_TOKEN` | Bearer access token |
 | `TS_CLIENT_SECRET` | Tailscale OAuth trust credential (`tskey-client-…`); client ID is derived from it |
+| `TS_CREDENTIAL_ENV` | Name of the env var holding the OAuth trust credential — the explicit env-level equivalent of `--credential-env` (the config file `credentialEnv` key sets it); beats `TS_CLIENT_SECRET` and auto-detection |
 | `TS_CLIENT_ID` | OAuth client ID when the secret is not a self-describing trust credential |
 | `TS_OAUTH_CLIENT_ID` | OAuth client ID (alternative to `TS_CLIENT_ID`) |
 | `TS_OAUTH_CLIENT_SECRET` | OAuth client secret |
@@ -163,14 +164,17 @@ environment variables override:
   "hostname": "web-01",
   "tags": ["prod", "web"],
   "keyExpiry": "max",
-  "ephemeral": false
+  "ephemeral": false,
+  "credentialEnv": "CI_TAILSCALE_TRUST"
 }
 ```
 
 Any env var whose value starts with `tskey-client-` is auto-detected as an OAuth trust
-credential; use `--credential-env <name>` to select one explicitly when several are
-present. Secrets are never returned raw by `doctor` and are not written to logs; server
-error text is scrubbed for `tskey-…` and `Authorization` material.
+credential; use `--credential-env <name>`, `TS_CREDENTIAL_ENV`, or the config file
+`credentialEnv` key to select the exact env var when several are present (the value itself
+must still come from the environment — the config file only names the variable). Secrets
+are never returned raw by `doctor` and are not written to logs; server error text is
+scrubbed for `tskey-…` and `Authorization` material.
 
 ## Interactive menu and safety flags
 
@@ -185,10 +189,10 @@ are gated behind explicit flags so a plain `--yes` never quietly rewrites tailne
 |---|---|
 | `--apply-policy` | Allow HuJSON-preserving `tagOwners`/`nodeAttrs` provisioning (with plan + warning) |
 | `--enable-https` | Allow enabling tailnet-wide HTTPS (required for Serve/Funnel) |
-| `--key-expiry <value>` | Auth-key expiry for this run (`max`, `unlimited`, seconds; overrides `TS_KEY_EXPIRY`) |
+| `--key-expiry <value>` | Auth-key expiry for this run (`max`, `unlimited`, seconds; overrides `TS_KEY_EXPIRY`). `max`/`unlimited` map to the documented 90-day ceiling — not an API-discovered maximum; explicit seconds above the ceiling are clamped with a `KEY_EXPIRY_CLAMPED` warning |
 | `--tag-owner <owner...>` | Owner(s) for auto-provisioned `tagOwners` (overrides `TS_TAG_OWNER`) |
 | `--cleanup` | Run the exact-match offline device cleanup at the end of a deploy on **any** profile (auto-cleanup otherwise defaults to CI/container) |
-| `--verify-timeout <sec>` | Funnel public-DNS propagation timeout (default 120s) |
+| `--verify-timeout <sec>` | Funnel public-DNS + live-endpoint verification timeout (default 120s) |
 | `--config <path>` | Path to `tailscale-cli.config.json` config file (default: auto-detect in cwd) |
 | `status --show-resolution` | Show credential resolution source and masked value in status output |
 | `dns --dry-run` | Preview MagicDNS enablement without applying changes |
@@ -200,7 +204,11 @@ are gated behind explicit flags so a plain `--yes` never quietly rewrites tailne
 | `daemon stop` | Stop a userspace tailscaled started and tracked by this tool |
 
 `funnel` refuses ephemeral nodes (they never publish public DNS), auto-detects the target
-from `$PORT` when none is given, and verifies the public A record before reporting success.
+from `$PORT` when none is given, and verifies both the public A record and the **live
+endpoint** before reporting success: HTTPS funnels get a TLS handshake + HTTP probe per
+public port, TCP funnels get a raw TCP connect, each retried up to `--verify-timeout`
+(default 120s). A published DNS record alone is never reported as success —
+`FUNNEL_ENDPOINT_UNREACHABLE` is raised when the record exists but the connection fails.
 
 With `deploy --funnel --yes`, the funnel node attribute is checked **before** the local
 `funnel` command runs: it is auto-provisioned when `--apply-policy` is present, otherwise

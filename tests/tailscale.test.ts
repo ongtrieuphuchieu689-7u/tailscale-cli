@@ -12,43 +12,58 @@ async function fakeTailscaleBin(): Promise<string> {
   return shim;
 }
 
+// The POSIX shell shim cannot be spawned on Windows (execFile rejects .cmd
+// wrappers with EINVAL and there is no portable script executable); the
+// --socket pass-through logic is platform-independent and covered by the
+// Linux matrix jobs.
+const skipOnWindows = process.platform === "win32";
+
 describe("TailscaleLocal --socket pass-through", () => {
-  it("prefixes --socket from options.env when set", async () => {
-    const shim = await fakeTailscaleBin();
-    const local = new TailscaleLocal(shim);
-    const result = await local.run(["status"], {
-      env: { TS_TAILSCALE_SOCKET: "/tmp/env-sock/tailscaled.sock" },
-    });
-    expect(result.stdout.split("\n")[0]).toBe(
-      "--socket=/tmp/env-sock/tailscaled.sock",
-    );
-    expect(result.stdout.split("\n")[1]).toBe("status");
-  });
-
-  it("falls back to process.env.TS_TAILSCALE_SOCKET when options.env is absent", async () => {
-    const previous = process.env.TS_TAILSCALE_SOCKET;
-    process.env.TS_TAILSCALE_SOCKET = "/tmp/shared-sock/tailscaled.sock";
-    try {
+  it.skipIf(skipOnWindows)(
+    "prefixes --socket from options.env when set",
+    async () => {
       const shim = await fakeTailscaleBin();
-      const result = await new TailscaleLocal(shim).run(["status"]);
+      const local = new TailscaleLocal(shim);
+      const result = await local.run(["status"], {
+        env: { TS_TAILSCALE_SOCKET: "/tmp/env-sock/tailscaled.sock" },
+      });
       expect(result.stdout.split("\n")[0]).toBe(
-        "--socket=/tmp/shared-sock/tailscaled.sock",
+        "--socket=/tmp/env-sock/tailscaled.sock",
       );
-    } finally {
-      if (previous === undefined) delete process.env.TS_TAILSCALE_SOCKET;
-      else process.env.TS_TAILSCALE_SOCKET = previous;
-    }
-  });
+      expect(result.stdout.split("\n")[1]).toBe("status");
+    },
+  );
 
-  it("passes args through unchanged when no socket is configured", async () => {
-    const previous = process.env.TS_TAILSCALE_SOCKET;
-    if (previous !== undefined) delete process.env.TS_TAILSCALE_SOCKET;
-    try {
-      const shim = await fakeTailscaleBin();
-      const result = await new TailscaleLocal(shim).run(["status"]);
-      expect(result.stdout.split("\n")[0]).toBe("status");
-    } finally {
-      if (previous !== undefined) process.env.TS_TAILSCALE_SOCKET = previous;
-    }
-  });
+  it.skipIf(skipOnWindows)(
+    "falls back to process.env.TS_TAILSCALE_SOCKET when options.env is absent",
+    async () => {
+      const previous = process.env.TS_TAILSCALE_SOCKET;
+      process.env.TS_TAILSCALE_SOCKET = "/tmp/shared-sock/tailscaled.sock";
+      try {
+        const shim = await fakeTailscaleBin();
+        const result = await new TailscaleLocal(shim).run(["status"]);
+        expect(result.stdout.split("\n")[0]).toBe(
+          "--socket=/tmp/shared-sock/tailscaled.sock",
+        );
+      } finally {
+        if (previous === undefined) delete process.env.TS_TAILSCALE_SOCKET;
+        else process.env.TS_TAILSCALE_SOCKET = previous;
+      }
+    },
+  );
+
+  it.skipIf(skipOnWindows)(
+    "passes args through unchanged when no socket is configured",
+    async () => {
+      const previous = process.env.TS_TAILSCALE_SOCKET;
+      if (previous !== undefined) delete process.env.TS_TAILSCALE_SOCKET;
+      try {
+        const shim = await fakeTailscaleBin();
+        const result = await new TailscaleLocal(shim).run(["status"]);
+        expect(result.stdout.split("\n")[0]).toBe("status");
+      } finally {
+        if (previous !== undefined) process.env.TS_TAILSCALE_SOCKET = previous;
+      }
+    },
+  );
 });
