@@ -144,9 +144,23 @@ async function startUserspaceDaemon(): Promise<{
   return { started: false, command: command.join(" ") };
 }
 
+export async function trackedUserspaceSocket(): Promise<string | undefined> {
+  const tracked = readTrackedDaemon();
+  if (!tracked?.socket) return undefined;
+  if (!(isUserspaceTailscaled(tracked.pid) && (await isAlive(tracked.pid))))
+    return undefined;
+  return tracked.socket;
+}
+
 export async function ensureDaemon(): Promise<DaemonState> {
   const inspected = await inspectDaemon();
-  if (inspected.running) return inspected;
+  if (inspected.running) {
+    if (!process.env.TS_TAILSCALE_SOCKET) {
+      const socket = await trackedUserspaceSocket();
+      if (socket) process.env.TS_TAILSCALE_SOCKET = socket;
+    }
+    return inspected;
+  }
   if (process.platform === "win32") return inspected;
 
   const actions: string[] = [];

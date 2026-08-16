@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { existsSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { cacheBinPath, ensureBinary } from "./binary.js";
+import { trackedUserspaceSocket } from "./daemon.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -115,7 +116,8 @@ export class TailscaleLocal {
   ): Promise<LocalCommandResult> {
     const socket =
       options.env?.TS_TAILSCALE_SOCKET?.trim() ??
-      process.env.TS_TAILSCALE_SOCKET?.trim();
+      process.env.TS_TAILSCALE_SOCKET?.trim() ??
+      (await trackedUserspaceSocket());
     const commandArgs = socket ? [`--socket=${socket}`, ...args] : args;
     const { stdout, stderr } = await execFileAsync(this.bin, commandArgs, {
       timeout: options.timeoutMs ?? 60_000,

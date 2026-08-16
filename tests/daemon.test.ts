@@ -7,6 +7,7 @@ import {
   daemonStatus,
   readTrackedDaemon,
   stopUserspaceDaemon,
+  trackedUserspaceSocket,
 } from "../src/daemon.js";
 
 async function withBinDir(fn: () => Promise<void>): Promise<void> {
@@ -100,6 +101,33 @@ describe("userspace daemon lifecycle tracking", () => {
         expect(result.pid).toBe(pid);
       }
       await expect(readTrackedDaemon()).toBeUndefined();
+    });
+  });
+
+  it("returns the tracked socket only while the userspace daemon is alive", async () => {
+    await withBinDir(async () => {
+      const child = spawn(
+        process.execPath,
+        [
+          "-e",
+          "setInterval(() => {}, 1000)",
+          "tailscaled",
+          "--tun=userspace-networking",
+        ],
+        { stdio: "ignore" },
+      );
+      const pid = child.pid!;
+      await writePid(pid);
+      if (process.platform === "win32") {
+        await expect(trackedUserspaceSocket()).resolves.toBeUndefined();
+      } else {
+        await expect(trackedUserspaceSocket()).resolves.toBe(
+          "/tmp/sock/tailscaled.sock",
+        );
+        const result = await stopUserspaceDaemon();
+        expect(result.stopped).toBe(true);
+        await expect(trackedUserspaceSocket()).resolves.toBeUndefined();
+      }
     });
   });
 });
