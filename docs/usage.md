@@ -1,7 +1,19 @@
 # Usage
 
-Commands: `doctor`, `deploy`, `up`, `funnel`, `serve`, `dns`, `policy`, `status`, `cleanup`, `agent-manifest`.
+## First run
 
-Use `--json` for the stable envelope. `doctor --detect-credentials --json` has no side effects. `TS_PROFILE` supports ci, container, vm, windows, dev, funnel-app, subnet-router and exit-node. Defaults are SSH on, preauthorized on, accept-dns on, key expiry `max`, and cleanup threshold 60 minutes.
+Run `tailsacle-cli doctor --detect-credentials --json` first. The command does not modify the tailnet or local Tailscale state.
 
-Policy writes and device deletion are guarded operations: candidate/diff, warning, backup, validation, ETag and confirmation are required. Missing permissions never become a fake success.
+## Deployment
+
+`deploy` resolves the runtime profile, uses an existing `TS_AUTH_KEY` or creates an auth key through the Tailscale API, runs `tailscale up`, verifies a Running backend, and can configure Serve/Funnel exposures.
+
+Use `--dry-run` to inspect the resolved deployment plan without joining the tailnet.
+
+## Guarded operations
+
+Policy writes require a fetched remote policy, diff, remote validation, local backup, ETag-protected write and a final confirmation. Device cleanup requires an exact candidate set and confirmation. In CI/non-TTY environments use `--yes` explicitly.
+
+## Automation
+
+Pass `--json` to commands that support stable JSON output. The `agent-manifest` contract lists available commands and safety rules. Secrets are masked and never returned raw.
