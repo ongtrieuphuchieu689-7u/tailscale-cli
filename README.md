@@ -146,6 +146,7 @@ Cleanup is restricted to devices that are offline beyond `TS_CLEANUP_OFFLINE_AFT
 | `TS_PROTECTED_DEVICES` | Comma-separated protected device IDs/names |
 | `TS_BIN_DIR` | Binary cache directory for `update-bin`/auto-download |
 | `TS_TAILSCALE_BIN` | Explicit Tailscale binary path |
+| `TS_TAILSCALE_SOCKET` | Explicit path to the tailscaled Unix socket (default: `/var/run/tailscale/tailscaled.sock`) |
 | `TS_TAILSCALE_SOCKET` | Socket path for a userspace tailscaled (default `/var/run/tailscale/tailscaled.sock`); when set, every local `tailscale` call passes `--socket=` |
 | `TS_TAILSCALED_STATE` | State path for a userspace tailscaled (default `/var/lib/tailscale/tailscaled.state`) |
 | `TS_CLI_YES` | `true`/`1` answers every confirmation like `--yes` (for embedded automation) |
@@ -177,6 +178,8 @@ are gated behind explicit flags so a plain `--yes` never quietly rewrites tailne
 | `funnel --expose 443=3000 --expose 443/api=3001` | Multiple HTTPS Funnel targets/paths (all are reported in `resolved.exposures`) |
 | `dns --enable-magicdns --yes` | Enable MagicDNS on the tailnet (post + read-after-write verify) |
 | `update-bin --force --skip-checksum` | Force a fresh verified download; skip the SHA256 check (not recommended) |
+| `daemon status` | Report the local tailscaled state and any userspace daemon tracked in the pidfile |
+| `daemon stop` | Stop a userspace tailscaled started and tracked by this tool |
 
 `funnel` refuses ephemeral nodes (they never publish public DNS), auto-detects the target
 from `$PORT` when none is given, and verifies the public A record before reporting success.

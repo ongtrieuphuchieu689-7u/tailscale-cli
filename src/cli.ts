@@ -26,7 +26,7 @@ import {
   latestWindowsInstallInfo,
   updateCacheBinary,
 } from "./binary.js";
-import { ensureDaemon, inspectDaemon } from "./daemon.js";
+import { ensureDaemon, inspectDaemon, daemonStatus, stopUserspaceDaemon } from "./daemon.js";
 import { manifest } from "./manifest.js";
 import {
   ensureFunnelAccess,
@@ -1183,6 +1183,51 @@ program
     const opts = program.opts<{ json?: boolean }>();
     if (opts.json) emit("agent-manifest", manifest, [], [], [], start);
     else console.log(JSON.stringify(manifest, null, 2));
+  });
+
+program
+  .command("daemon")
+  .description("Inspect or stop the local tailscaled daemon")
+  .argument(
+    "<action>",
+    "status (report the daemon and any userspace instance this tool started) or stop (stop only a userspace tailscaled tracked in the daemon pidfile)",
+  )
+  .action(async (action: string) => {
+    const start = performance.now();
+    try {
+      if (action === "stop") {
+        const result = await stopUserspaceDaemon();
+        emit(
+          "daemon",
+          { action, ...result },
+          result.stopped ? [] : [result.message],
+          result.stopped ? ["stop tracked userspace tailscaled"] : [],
+          [],
+          start,
+        );
+        return;
+      }
+      if (action !== "status")
+        throw new Error(
+          `DAEMON_ACTION_INVALID: expected "status" or "stop", got "${action}"`,
+        );
+      const status = await daemonStatus();
+      emit(
+        "daemon",
+        {
+          action,
+          running: status.running,
+          tracked: status.tracked,
+          trackedAlive: status.trackedAlive,
+        },
+        status.warnings,
+        status.actions,
+        [],
+        start,
+      );
+    } catch (error) {
+      fail("daemon", error, start);
+    }
   });
 
 const rawArgs = process.argv.slice(2);

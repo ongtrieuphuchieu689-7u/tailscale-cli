@@ -30,6 +30,14 @@ Policy writes require a fetched remote policy, diff, remote validation, local ba
 - `dns --enable-magicdns --yes` enables MagicDNS on the tailnet; plain `dns` reads nameservers/preferences/search paths.
 - Custom `TS_TAILNET` domains (not `*.ts.net`) emit a warning because Funnel DNS and HTTPS rely on a Tailscale-hosted domain.
 
+## Daemon lifecycle
+
+`daemon status` reports the local tailscaled state and any userspace daemon this tool started (tracked via a pidfile in the binary cache). `daemon stop` sends SIGTERM (then SIGKILL) to a tracked userspace tailscaled process; it will not stop system-managed daemons.
+
+- The socket path defaults to `TS_TAILSCALE_SOCKET` or `/var/run/tailscale/tailscaled.sock`.
+- When running as root, the daemon is started directly; otherwise a `sudo` invocation is attempted with a clear warning when it fails.
+- The pidfile is only written when the CLI itself spawns the daemon; existing tailscaled instances started by systemd or manual commands are not tracked.
+
 ## Automation
 
 Pass `--json` to commands that support stable JSON output. Every envelope carries `ok`, `command`, `durationMs`, `resolved`, `warnings`, `requiredPrivileges`, `sideEffects`, `retryable` and `error`. The versioned `agent-manifest` contract (`manifestVersion: 2`) describes per-tool inputs/outputs, scopes, privileges, side effects, retryability, confirmation requirements and warning codes. Exit codes: `1` general, `3` credential, `4` permission/scope, `5` binary, `6` local Tailscale, `7` funnel/DNS, `8` policy, `9` privilege, `75` retryable. Secrets are masked and server error text is scrubbed (`tskey-…`, `Authorization`) before surfacing.
