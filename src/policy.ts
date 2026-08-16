@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { readFile, copyFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { TailscaleApiClient } from './api.js';
 import type { ResolvedConfig } from './types.js';
 import { confirm } from './interactive.js';
@@ -44,7 +44,7 @@ export async function policySync(config: ResolvedConfig, file: string, options: 
   if (!approved) throw new Error('POLICY_CONFIRMATION_REQUIRED: use --yes in CI or confirm in a TTY');
 
   const backup = `${file}.bak`;
-  await copyFile(file, backup);
+  await writeFile(backup, current.content, 'utf8');
   await api.updatePolicy(desired, current.etag);
   const verified = await api.getPolicy();
   if (!verified.json) throw new Error('POLICY_VERIFY_FAILED: API returned no policy');
