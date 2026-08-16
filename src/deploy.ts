@@ -106,8 +106,9 @@ function buildUpArgs(config: ResolvedConfig): string[] {
     `--hostname=${config.hostname}`,
     `--accept-dns=${config.acceptDns}`,
     `--accept-routes=${config.acceptRoutes}`,
-    config.ssh ? "--ssh" : "--ssh=false",
   ];
+  if (process.platform !== "win32")
+    args.push(config.ssh ? "--ssh" : "--ssh=false");
   if (config.profile === "exit-node") args.push("--advertise-exit-node");
   if (config.profile === "subnet-router" && process.env.TS_ADVERTISE_ROUTES)
     args.push(`--advertise-routes=${process.env.TS_ADVERTISE_ROUTES}`);
@@ -249,6 +250,10 @@ export async function deploy(
   );
   const expirySeconds = expiryPlan.seconds;
   warnings.push(...expiryPlan.warnings);
+  if (process.platform === "win32" && config.ssh === true)
+    warnings.push(
+      "SSH_DISABLED_ON_WINDOWS: the Tailscale SSH server is not supported on Windows; --ssh was ignored",
+    );
   const { tags: deploymentTags, autoTagged } = resolveTags(config);
   if (autoTagged)
     warnings.push(
