@@ -16,9 +16,15 @@ Place `tailscale-cli.config.json` in your project root or pass `--config <path>`
   "hostname": "web-01",
   "tags": ["prod", "web"],
   "keyExpiry": "max",
-  "ephemeral": false
+  "ephemeral": false,
+  "credentialEnv": "CI_TAILSCALE_TRUST"
 }
 ```
+
+`credentialEnv` names the env var that holds the OAuth trust credential (the value itself
+must come from the environment); it is the config-file equivalent of
+`--credential-env`/`TS_CREDENTIAL_ENV` and selects the credential explicitly instead of
+auto-detecting.
 
 ## Deployment
 
@@ -27,7 +33,7 @@ Place `tailscale-cli.config.json` in your project root or pass `--config <path>`
 - `--dry-run` inspects the resolved deployment plan without joining the tailnet.
 - `--apply-policy` allows HuJSON-preserving `tagOwners`/`nodeAttrs` provisioning (never with plain `--yes` alone).
 - `--enable-https` allows enabling tailnet-wide HTTPS for Funnel exposures (HTTPS is never enabled implicitly).
-- `--key-expiry <value>` overrides the auth-key lifetime for this run (`max`/`unlimited` map to the documented 90-day ceiling; seconds are passed through verbatim).
+- `--key-expiry <value>` overrides the auth-key lifetime for this run (`max`/`unlimited` map to the documented 90-day ceiling; seconds are passed through verbatim, clamped with a `KEY_EXPIRY_CLAMPED` warning when above the ceiling).
 - `--tag-owner <owner...>` sets the owner(s) for auto-provisioned `tagOwners`; mixed-owner policies without it fail with `POLICY_TAG_OWNER_REQUIRED` instead of guessing.
 - `--cleanup` prunes exact-match offline devices for the deployment at the end on **any** profile (without the flag, no cleanup runs anywhere; `TS_NO_CLEANUP=1` still disables it).
 - With `deploy --funnel`, the funnel node attribute is verified **before** the local `funnel` command runs: auto-provisioned when `--apply-policy` is present, otherwise the deploy fails fast with `FUNNEL_ATTR_REQUIRED`.
@@ -40,7 +46,7 @@ Policy writes require a fetched remote policy, diff, remote validation, local ba
 
 ## Funnel and DNS
 
-- `funnel` refuses ephemeral nodes (they never publish public DNS), auto-detects the target from `$PORT`, supports `--tcp <public:local>` and repeatable `--expose 443=3000 --expose 443/api=3001`, and verifies the public A record (dns.google + getent) up to `--verify-timeout` (default 120s) before reporting the public URL.
+- `funnel` refuses ephemeral nodes (they never publish public DNS), auto-detects the target from `$PORT`, supports `--tcp <public:local>` and repeatable `--expose 443=3000 --expose 443/api=3001`, and verifies the public A record (dns.google + getent) **and the live endpoint** up to `--verify-timeout` (default 120s) before reporting the public URL: HTTPS funnels are probed with a TLS handshake + HTTP request per public port (`tlsVerified`/`tlsVerifiedPorts`), TCP funnels with a raw TCP connect (`tcpVerified`). DNS alone is never reported as success; an unreachable endpoint fails with `FUNNEL_ENDPOINT_UNREACHABLE`.
 - `dns --enable-magicdns --yes` enables MagicDNS on the tailnet; `dns --enable-magicdns --dry-run` previews the action without applying; plain `dns` reads nameservers/preferences/search paths.
 - Custom `TS_TAILNET` domains (not `*.ts.net`) emit a warning because Funnel DNS and HTTPS rely on a Tailscale-hosted domain.
 

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   resolveKeyExpiry,
+  resolveKeyExpiryPlan,
   parseExposure,
   resolveExposures,
   ensureFunnelReadiness,
@@ -138,12 +139,12 @@ describe("deploy funnel readiness pre-check (item A)", () => {
 });
 
 describe("key expiry resolution", () => {
-  it("defaults to the server max lifetime", () => {
+  it("maps max and the default to the documented 90-day ceiling", () => {
     expect(resolveKeyExpiry("max")).toBe(90 * 24 * 60 * 60);
     expect(resolveKeyExpiry("")).toBe(90 * 24 * 60 * 60);
   });
 
-  it("treats unlimited as the documented 90-day ceiling", () => {
+  it("caps unlimited at the documented 90-day ceiling", () => {
     expect(resolveKeyExpiry("unlimited")).toBe(90 * 24 * 60 * 60);
     expect(resolveKeyExpiry("UNLIMITED")).toBe(90 * 24 * 60 * 60);
   });
@@ -158,6 +159,36 @@ describe("key expiry resolution", () => {
     expect(() => resolveKeyExpiry("-5")).toThrow("KEY_EXPIRY_INVALID");
     expect(() => resolveKeyExpiry("0")).toThrow("KEY_EXPIRY_INVALID");
     expect(() => resolveKeyExpiry("1.5x")).toThrow("KEY_EXPIRY_INVALID");
+  });
+});
+
+describe("key expiry plan (documented ceiling, not a discovered server max)", () => {
+  it("warns KEY_EXPIRY_MAX only for the default, not for an explicit max", () => {
+    const plan = resolveKeyExpiryPlan("max", "default");
+    expect(plan.seconds).toBe(90 * 24 * 60 * 60);
+    expect(plan.warnings.join("\n")).toContain("KEY_EXPIRY_MAX");
+    expect(plan.warnings.join("\n")).toContain("documented 90-day");
+    const explicit = resolveKeyExpiryPlan("max", "TS_KEY_EXPIRY");
+    expect(explicit.seconds).toBe(90 * 24 * 60 * 60);
+    expect(explicit.warnings).toEqual([]);
+  });
+
+  it("warns that unlimited is capped at the documented ceiling", () => {
+    const plan = resolveKeyExpiryPlan("unlimited", "TS_KEY_EXPIRY");
+    expect(plan.seconds).toBe(90 * 24 * 60 * 60);
+    expect(plan.warnings.join("\n")).toContain("KEY_EXPIRY_UNLIMITED");
+  });
+
+  it("clamps explicit seconds above the ceiling with a warning", () => {
+    const plan = resolveKeyExpiryPlan("999999999", "TS_KEY_EXPIRY");
+    expect(plan.seconds).toBe(90 * 24 * 60 * 60);
+    expect(plan.warnings.join("\n")).toContain("KEY_EXPIRY_CLAMPED");
+  });
+
+  it("passes in-range seconds through untouched", () => {
+    const plan = resolveKeyExpiryPlan("3600", "TS_KEY_EXPIRY");
+    expect(plan.seconds).toBe(3600);
+    expect(plan.warnings).toEqual([]);
   });
 });
 

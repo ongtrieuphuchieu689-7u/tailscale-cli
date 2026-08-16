@@ -31,6 +31,46 @@ describe("credential resolution", () => {
   it("returns a masked value without exposing the secret", () => {
     expect(maskSecret("super-secret-value")).toBe("super…lue");
   });
+
+  it("honors TS_CREDENTIAL_ENV as the explicit trust credential selector", () => {
+    const result = resolveCredential({
+      TS_CREDENTIAL_ENV: "CI_TAILSCALE_TRUST",
+      CI_TAILSCALE_TRUST: "tskey-client-abc123-wxyz9876qwer",
+    });
+    expect(result.found).toBe(true);
+    expect(result.source).toBe("CI_TAILSCALE_TRUST");
+    expect(result.masked).toBe("tskey…wer");
+  });
+
+  it("lets TS_CREDENTIAL_ENV beat TS_CLIENT_SECRET and the ambient scan", () => {
+    const result = resolveCredential({
+      TS_CREDENTIAL_ENV: "CI_TAILSCALE_TRUST",
+      CI_TAILSCALE_TRUST: "tskey-client-abc123-wxyz9876qwer",
+      TS_CLIENT_SECRET: "tskey-client-other456-lmnop7890qwer",
+      OTHER: "tskey-client-secondary",
+    });
+    expect(result.found).toBe(true);
+    expect(result.source).toBe("CI_TAILSCALE_TRUST");
+  });
+
+  it("reports CREDENTIAL_ENV_MISSING when the selected env is not set", () => {
+    const result = resolveCredential({
+      TS_CREDENTIAL_ENV: "CI_TAILSCALE_TRUST",
+      OTHER: "tskey-client-secondary",
+    });
+    expect(result.found).toBe(false);
+    expect(result.error).toBe("CREDENTIAL_ENV_MISSING");
+    expect(result.candidates).toEqual(["CI_TAILSCALE_TRUST"]);
+  });
+
+  it("reports CREDENTIAL_FORMAT_UNSUPPORTED for a selected env without a trust credential", () => {
+    const result = resolveCredential({
+      TS_CREDENTIAL_ENV: "CI_TAILSCALE_TRUST",
+      CI_TAILSCALE_TRUST: "tskey-api-xxx",
+    });
+    expect(result.found).toBe(false);
+    expect(result.error).toBe("CREDENTIAL_FORMAT_UNSUPPORTED");
+  });
 });
 
 describe("unified auth resolution (manifest precedence)", () => {

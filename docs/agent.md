@@ -21,7 +21,7 @@ The `agent-manifest --json` tool (see `src/manifest.ts`) is the authoritative co
 
 ## Credential resolution
 
-`resolve_credentials.precedence` in the manifest matches the implementation: `TS_AUTH_KEY` > `TS_CLIENT_SECRET` > any env var starting with `tskey-client-` (single match only) > `TS_OAUTH_CLIENT_ID` + `TS_OAUTH_CLIENT_SECRET` > `TS_ACCESS_TOKEN` > `TS_API_KEY`. When several trust credentials are present the CLI reports `CREDENTIAL_AMBIGUOUS` and requires `--credential-env <name>`. The API client is constructed with the same resolved env name, so an arbitrary env var (e.g. `CI_TAILSCALE_TRUST`) drives the actual deploy path, not just `doctor`.
+`resolve_credentials.precedence` in the manifest matches the implementation: `TS_AUTH_KEY` > explicit selection (`--credential-env`, `TS_CREDENTIAL_ENV` or the config file `credentialEnv` key) > `TS_CLIENT_SECRET` > any env var starting with `tskey-client-` (single match only) > `TS_OAUTH_CLIENT_ID` + `TS_OAUTH_CLIENT_SECRET` > `TS_ACCESS_TOKEN` > `TS_API_KEY`. When several trust credentials are present the CLI reports `CREDENTIAL_AMBIGUOUS` and requires `--credential-env <name>`. The API client is constructed with the same resolved env name, so an arbitrary env var (e.g. `CI_TAILSCALE_TRUST`) drives the actual deploy path, not just `doctor`.
 
 ## Guardrails
 

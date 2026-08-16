@@ -55,6 +55,7 @@ export const manifest = {
       FUNNEL_ATTR_REQUIRED: 7,
       FUNNEL_EPHEMERAL: 7,
       FUNNEL_DNS_NOT_PUBLISHED: 7,
+      FUNNEL_ENDPOINT_UNREACHABLE: 7,
       PRIVILEGE_REQUIRED: 9,
     },
     privilegeMap: {
@@ -71,6 +72,8 @@ export const manifest = {
       "ENABLED_HTTPS",
       "KEY_EXPIRY_DEFAULT",
       "KEY_EXPIRY_MAX",
+      "KEY_EXPIRY_UNLIMITED",
+      "KEY_EXPIRY_CLAMPED",
       "AUTO_TAG",
       "REUSABLE_KEY_DEFAULTED",
       "TAILNET_DEFAULTED",
@@ -88,6 +91,7 @@ export const manifest = {
   resolve_credentials: {
     precedence: [
       "TS_AUTH_KEY",
+      "TS_CREDENTIAL_ENV-selected env var (or --credential-env)",
       "TS_CLIENT_SECRET",
       "OAuth trust credential in any tskey-client- env var",
       "TS_OAUTH_CLIENT_ID + TS_OAUTH_CLIENT_SECRET",
@@ -95,7 +99,7 @@ export const manifest = {
       "TS_API_KEY",
     ],
     override:
-      "--credential-env <name> to select one specific env var (required when detection is ambiguous); --client-secret/--client-id override TS_CLIENT_SECRET/TS_CLIENT_ID for one run (visible in process listings)",
+      "--credential-env <name> (or TS_CREDENTIAL_ENV / config file credentialEnv) to select one specific env var holding the trust credential (required when detection is ambiguous); --client-secret/--client-id override TS_CLIENT_SECRET/TS_CLIENT_ID for one run (visible in process listings)",
     auto_detect: {
       source: "any env var whose value starts with tskey-client-",
     },
@@ -205,7 +209,7 @@ export const manifest = {
     {
       name: "funnel",
       summary:
-        "Expose a local service publicly via Tailscale Funnel and verify public DNS propagation.",
+        "Expose a local service publicly via Tailscale Funnel and verify public DNS propagation plus the live TLS/TCP endpoint.",
       command: [
         "funnel",
         "[target]",
@@ -226,7 +230,7 @@ export const manifest = {
         ],
       },
       outputs: {
-        json: "resolved { target, public, https, path, url?, dnsPropagated, dnsAttempts }",
+        json: "resolved { target, public, https, path, url?, dnsPropagated, dnsAttempts, verified, tlsVerified?, tlsVerifiedPorts?, tcpVerified?, verifyAttempts }",
       },
       scopes: ["policy_file (provisioning)", "all (HTTPS enable)"],
       privileges: [
@@ -241,7 +245,7 @@ export const manifest = {
       ],
       retryable: true,
       confirmation:
-        "--yes or TTY for provisioning; DNS verification retries up to --verify-timeout",
+        "--yes or TTY for provisioning; DNS and live-endpoint verification retry up to --verify-timeout",
     },
     {
       name: "serve",

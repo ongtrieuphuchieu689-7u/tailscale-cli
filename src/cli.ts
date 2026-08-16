@@ -38,6 +38,7 @@ import {
 } from "./policy.js";
 import type { ResolvedConfig } from "./types.js";
 import { confirm, promptCredential } from "./interactive.js";
+import { verifyEndpointReachable } from "./verify.js";
 import type { Envelope } from "./types.js";
 
 function packageVersion(): string {
@@ -154,19 +155,19 @@ function configEnv(): NodeJS.ProcessEnv {
 
 function resolvedCredentialEnv(): string | undefined {
   const opts = program.opts<CliOptions>();
-  if (opts.credentialEnv) {
-    const value = process.env[opts.credentialEnv]?.trim();
+  const env = configEnv();
+  const name = opts.credentialEnv ?? env.TS_CREDENTIAL_ENV?.trim();
+  if (name) {
+    const value = env[name]?.trim();
     if (!value)
-      throw new Error(
-        `CREDENTIAL_ENV_MISSING: env ${opts.credentialEnv} is not set`,
-      );
+      throw new Error(`CREDENTIAL_ENV_MISSING: env ${name} is not set`);
     if (!value.startsWith("tskey-client-"))
       throw new Error(
-        `CREDENTIAL_FORMAT_UNSUPPORTED: env ${opts.credentialEnv} is not a tskey-client- trust credential`,
+        `CREDENTIAL_FORMAT_UNSUPPORTED: env ${name} is not a tskey-client- trust credential`,
       );
-    return opts.credentialEnv;
+    return name;
   }
-  return credentialEnvName();
+  return credentialEnvName(env);
 }
 
 function envTagOwner(): string[] | undefined {
@@ -275,6 +276,7 @@ const ERROR_DOCS: Record<string, string> = {
   FUNNEL_PORT_UNSUPPORTED: `${DOCS_BASE}/user_requirement.md#funnel`,
   FUNNEL_ATTR_REQUIRED: `${DOCS_BASE}/user_requirement.md#funnel`,
   FUNNEL_DNS_NOT_PUBLISHED: `${DOCS_BASE}/user_requirement.md#funnel`,
+  FUNNEL_ENDPOINT_UNREACHABLE: `${DOCS_BASE}/user_requirement.md#funnel`,
   DNS_MAGICDNS_CONFIRMATION_REQUIRED: `${DOCS_BASE}/user_requirement.md#dns`,
   POLICY_FILE_REQUIRED: `${DOCS_BASE}/user_requirement.md#policy`,
   POLICY_VERIFY_FAILED: `${DOCS_BASE}/user_requirement.md#policy`,
@@ -283,8 +285,10 @@ const ERROR_DOCS: Record<string, string> = {
 
 async function credentialFromOptions(): Promise<ReturnType<typeof resolveCredential>> {
   const opts = program.opts<CliOptions>();
-  if (!opts.credentialEnv) {
-    const resolution = resolveCredential();
+  const env = configEnv();
+  const name = opts.credentialEnv ?? env.TS_CREDENTIAL_ENV?.trim();
+  if (!name) {
+    const resolution = resolveCredential(env);
     if (!resolution.found && resolution.error === "CREDENTIAL_NOT_FOUND") {
       const prompted = await promptCredential();
       if (prompted && prompted.startsWith("tskey-client-")) {
@@ -299,22 +303,22 @@ async function credentialFromOptions(): Promise<ReturnType<typeof resolveCredent
     }
     return resolution;
   }
-  const value = process.env[opts.credentialEnv]?.trim();
+  const value = env[name]?.trim();
   if (!value)
     return {
       found: false,
-      candidates: [opts.credentialEnv],
+      candidates: [name],
       error: "CREDENTIAL_ENV_MISSING",
     };
   if (!value.startsWith("tskey-client-"))
     return {
       found: false,
-      candidates: [opts.credentialEnv],
+      candidates: [name],
       error: "CREDENTIAL_FORMAT_UNSUPPORTED",
     };
   return {
     found: true,
-    source: opts.credentialEnv,
+    source: name,
     masked: maskSecret(value),
     candidates: [],
   };
@@ -322,25 +326,27 @@ async function credentialFromOptions(): Promise<ReturnType<typeof resolveCredent
 
 function authFromOptions(): ReturnType<typeof resolveAuth> {
   const opts = program.opts<CliOptions>();
-  if (!opts.credentialEnv) return resolveAuth(configEnv());
-  const value = process.env[opts.credentialEnv]?.trim();
+  const env = configEnv();
+  const name = opts.credentialEnv ?? env.TS_CREDENTIAL_ENV?.trim();
+  if (!name) return resolveAuth(env);
+  const value = env[name]?.trim();
   if (!value)
     return {
       found: false,
-      candidates: [opts.credentialEnv],
+      candidates: [name],
       error: "CREDENTIAL_ENV_MISSING",
     };
   if (!value.startsWith("tskey-client-"))
     return {
       found: false,
-      candidates: [opts.credentialEnv],
+      candidates: [name],
       error: "CREDENTIAL_FORMAT_UNSUPPORTED",
     };
   return {
     found: true,
     auth: {
       kind: "oauth-trust",
-      source: opts.credentialEnv,
+      source: name,
       masked: maskSecret(value),
     },
     candidates: [],
@@ -867,7 +873,7 @@ function parseFunnelExpose(value: string): {
 program
   .command("funnel")
   .description(
-    "Configure Tailscale Funnel for a target (auto-detects target and verifies public DNS)",
+    "Configure Tailscale Funnel for a target (auto-detects target and verifies public DNS plus the live TLS/TCP endpoint)",
   )
   .argument(
     "[target]",
@@ -883,7 +889,7 @@ program
   .option("--yes")
   .option("--apply-policy")
   .option("--enable-https")
-  .option("--verify-timeout <sec>", "DNS propagation timeout")
+  .option("--verify-timeout <sec>", "public DNS and live-endpoint verification timeout")
   .action(async (target: string | undefined, options: FunnelOptions) => {
     const start = performance.now();
     try {
@@ -931,6 +937,18 @@ program
           throw new Error(
             `FUNNEL_DNS_NOT_PUBLISHED: no public DNS record for ${name ?? "the funnel hostname"} within ${verifySeconds}s (tried ${verify.attempts} times)`,
           );
+        const endpoint = name
+          ? await verifyEndpointReachable(
+              name,
+              [Number(publicPort)],
+              "tcp",
+              verifySeconds,
+            )
+          : { ok: false as const, verifiedPorts: [], attempts: 0 };
+        if (!endpoint.ok)
+          throw new Error(
+            `FUNNEL_ENDPOINT_UNREACHABLE: public DNS resolved for ${name} but the TCP endpoint ${name}:${publicPort} did not accept connections within ${verifySeconds}s (tried ${endpoint.attempts} times${endpoint.lastError ? `; last error: ${endpoint.lastError}` : ""})`,
+          );
         emit(
           "funnel",
           {
@@ -948,6 +966,8 @@ program
             verified: true,
             dnsPropagated: true,
             dnsAttempts: verify.attempts,
+            tcpVerified: true,
+            verifyAttempts: endpoint.attempts,
           },
           warnings,
           ["configure Funnel (TCP)", "verify public listener & DNS"],
@@ -1052,6 +1072,22 @@ program
         throw new Error(
           `FUNNEL_DNS_NOT_PUBLISHED: no public DNS record for ${name ?? "the funnel hostname"} within ${verifySeconds}s (tried ${verify.attempts} times)`,
         );
+      const publicPorts = [
+        ...new Set(
+          exposed.length ? exposed.map((exposure) => exposure.https) : [httpsPort],
+        ),
+      ];
+      const endpoint = name
+        ? await verifyEndpointReachable(name, publicPorts, "tls", verifySeconds)
+        : { ok: false as const, verifiedPorts: [], attempts: 0 };
+      if (!endpoint.ok) {
+        const unreachable = publicPorts.filter(
+          (port) => !endpoint.verifiedPorts.includes(port),
+        );
+        throw new Error(
+          `FUNNEL_ENDPOINT_UNREACHABLE: public DNS resolved for ${name} but TLS/HTTPS was not reachable on ${unreachable.map((port) => `${name}:${port}`).join(", ")} within ${verifySeconds}s (tried ${endpoint.attempts} times${endpoint.lastError ? `; last error: ${endpoint.lastError}` : ""})`,
+        );
+      }
       const baseUrl = name ? `https://${name}` : undefined;
       const pathFor = (value: string | undefined): string => value ?? "/";
       const exposures = exposed.length
@@ -1082,8 +1118,12 @@ program
               }
             : {}),
           exposures,
+          verified: true,
           dnsPropagated: true,
           dnsAttempts: verify.attempts,
+          tlsVerified: true,
+          tlsVerifiedPorts: endpoint.verifiedPorts,
+          verifyAttempts: endpoint.attempts,
         },
         warnings,
         [
