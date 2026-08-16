@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  loadConfigFile,
   maskSecret,
   resolveAuth,
   resolveConfig,
@@ -139,5 +140,17 @@ describe("config resolution", () => {
     expect(config.hostname.endsWith("-98765")).toBe(true);
     expect(config.hostname.length).toBeLessThanOrEqual(63);
     expect(config.source.hostname).toBe("os.hostname+run");
+  });
+});
+
+describe("config file loading", () => {
+  it("returns undefined when no config file is found", () => {
+    const result = loadConfigFile("/nonexistent/path/config.json");
+    expect(result).toBeUndefined();
+  });
+
+  it("returns undefined for invalid JSON", () => {
+    const result = loadConfigFile("/dev/null");
+    expect(result).toBeUndefined();
   });
 });

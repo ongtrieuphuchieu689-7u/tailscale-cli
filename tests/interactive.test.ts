@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { confirm } from "../src/interactive.js";
+import { confirm, promptCredential } from "../src/interactive.js";
 import { credentialEnvName, maskSecret } from "../src/core.js";
 
 describe("non-TTY confirmation safety", () => {
@@ -43,5 +43,22 @@ describe("credential env resolution", () => {
       "long-secret-value",
     );
     expect(maskSecret("short")).toBe("***");
+  });
+});
+
+describe("interactive credential prompt", () => {
+  it("returns undefined instead of prompting when stdin is not a TTY", async () => {
+    expect(await promptCredential()).toBeUndefined();
+  });
+
+  it("returns undefined when TS_CLI_YES is set", async () => {
+    const previous = process.env.TS_CLI_YES;
+    process.env.TS_CLI_YES = "1";
+    try {
+      expect(await promptCredential()).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.TS_CLI_YES;
+      else process.env.TS_CLI_YES = previous;
+    }
   });
 });

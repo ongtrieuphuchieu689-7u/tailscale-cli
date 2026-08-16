@@ -147,10 +147,25 @@ Cleanup is restricted to devices that are offline beyond `TS_CLEANUP_OFFLINE_AFT
 | `TS_BIN_DIR` | Binary cache directory for `update-bin`/auto-download |
 | `TS_TAILSCALE_BIN` | Explicit Tailscale binary path |
 | `TS_TAILSCALE_SOCKET` | Explicit path to the tailscaled Unix socket (default: `/var/run/tailscale/tailscaled.sock`) |
-| `TS_TAILSCALE_SOCKET` | Socket path for a userspace tailscaled (default `/var/run/tailscale/tailscaled.sock`); when set, every local `tailscale` call passes `--socket=` |
 | `TS_TAILSCALED_STATE` | State path for a userspace tailscaled (default `/var/lib/tailscale/tailscaled.state`) |
 | `TS_CLI_YES` | `true`/`1` answers every confirmation like `--yes` (for embedded automation) |
 | `TS_UNATTENDED` | Windows unattended join intent |
+
+### Config file
+
+Instead of exporting environment variables, place a `tailscale-cli.config.json` in your
+project root (or pass `--config <path>`). Config file values are used as defaults that
+environment variables override:
+
+```json
+{
+  "profile": "vm",
+  "hostname": "web-01",
+  "tags": ["prod", "web"],
+  "keyExpiry": "max",
+  "ephemeral": false
+}
+```
 
 Any env var whose value starts with `tskey-client-` is auto-detected as an OAuth trust
 credential; use `--credential-env <name>` to select one explicitly when several are
@@ -174,6 +189,9 @@ are gated behind explicit flags so a plain `--yes` never quietly rewrites tailne
 | `--tag-owner <owner...>` | Owner(s) for auto-provisioned `tagOwners` (overrides `TS_TAG_OWNER`) |
 | `--cleanup` | Run the exact-match offline device cleanup at the end of a deploy on **any** profile (auto-cleanup otherwise defaults to CI/container) |
 | `--verify-timeout <sec>` | Funnel public-DNS propagation timeout (default 120s) |
+| `--config <path>` | Path to `tailscale-cli.config.json` config file (default: auto-detect in cwd) |
+| `status --show-resolution` | Show credential resolution source and masked value in status output |
+| `dns --dry-run` | Preview MagicDNS enablement without applying changes |
 | `funnel --tcp 10000:5432` | TCP Funnel instead of HTTPS (public endpoint is verified too) |
 | `funnel --expose 443=3000 --expose 443/api=3001` | Multiple HTTPS Funnel targets/paths (all are reported in `resolved.exposures`) |
 | `dns --enable-magicdns --yes` | Enable MagicDNS on the tailnet (post + read-after-write verify) |

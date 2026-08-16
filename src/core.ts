@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import os from "node:os";
 import type { CredentialResolution, Profile, ResolvedConfig } from "./types.js";
 
@@ -76,6 +78,45 @@ function slug(value: string): string {
       .replace(/^-+|-+$/g, "")
       .slice(0, 63) || "tailscale-node"
   );
+}
+
+interface ConfigFile {
+  profile?: string;
+  tailnet?: string;
+  hostname?: string;
+  tags?: string[];
+  ssh?: boolean;
+  keyExpiry?: string;
+  preauthorized?: boolean;
+  reusable?: boolean;
+  ephemeral?: boolean;
+  acceptDns?: boolean;
+  acceptRoutes?: boolean;
+  cleanupAfter?: number;
+  credentialEnv?: string;
+  tagOwner?: string[];
+}
+
+export function loadConfigFile(
+  configPath?: string,
+): { config: ConfigFile; source: string } | undefined {
+  const candidates = configPath
+    ? [configPath]
+    : [
+        resolvePath(process.cwd(), "tailscale-cli.config.json"),
+        resolvePath(process.cwd(), "tailscale-cli.config.jsonc"),
+      ];
+  for (const candidate of candidates) {
+    try {
+      const raw = readFileSync(candidate, "utf8");
+      const cleaned = raw.replace(/\/\/[^\n]*/g, "").replace(/,\s*([\]}])/g, "$1");
+      const parsed = JSON.parse(cleaned) as ConfigFile;
+      return { config: parsed, source: candidate };
+    } catch {
+      // File not found or invalid; try next.
+    }
+  }
+  return undefined;
 }
 
 function profileFromEnvironment(env: NodeJS.ProcessEnv): Profile {

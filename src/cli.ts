@@ -8,6 +8,7 @@ import { apiCredentialHint, ApiError, TailscaleApiClient } from "./api.js";
 import { cleanup } from "./cleanup.js";
 import {
   credentialEnvName,
+  loadConfigFile,
   maskSecret,
   resolveAuth,
   resolveConfig,
@@ -36,7 +37,7 @@ import {
   policySync,
 } from "./policy.js";
 import type { ResolvedConfig } from "./types.js";
-import { confirm } from "./interactive.js";
+import { confirm, promptCredential } from "./interactive.js";
 import type { Envelope } from "./types.js";
 
 function packageVersion(): string {
@@ -59,6 +60,10 @@ program
   .version(packageVersion())
   .option("--json", "emit a stable JSON envelope")
   .option(
+    "--config <path>",
+    "path to tailscale-cli.config.json (default: auto-detect in cwd)",
+  )
+  .option(
     "--credential-env <name>",
     "use the Tailscale trust credential found in this env var (overrides auto-detection)",
   )
@@ -79,10 +84,15 @@ program.hook("preAction", () => applyCredentialFlags());
 
 interface CliOptions {
   json?: boolean;
+  config?: string;
   credentialEnv?: string;
   profile?: string;
   clientSecret?: string;
   clientId?: string;
+}
+
+function configPath(): string | undefined {
+  return program.opts<CliOptions>().config;
 }
 
 function applyCredentialFlags(): void {
@@ -102,21 +112,44 @@ function applyCredentialFlags(): void {
 }
 
 function configEnv(): NodeJS.ProcessEnv {
-  const profile = program.opts<CliOptions>().profile;
-  if (!profile) return process.env;
-  const valid = [
-    "ci",
-    "container",
-    "vm",
-    "windows",
-    "funnel-app",
-    "subnet-router",
-    "exit-node",
-    "dev",
-  ];
-  if (!valid.includes(profile))
-    throw new Error(`PROFILE_INVALID: expected one of ${valid.join(", ")}`);
-  return { ...process.env, TS_PROFILE: profile };
+  const opts = program.opts<CliOptions>();
+  let env = process.env;
+  const loaded = loadConfigFile(opts.config);
+  if (loaded) {
+    const fileEnv = { ...env };
+    const { config } = loaded;
+    if (config.profile && !env.TS_PROFILE) fileEnv.TS_PROFILE = config.profile;
+    if (config.tailnet && !env.TS_TAILNET) fileEnv.TS_TAILNET = config.tailnet;
+    if (config.hostname && !env.TS_HOSTNAME) fileEnv.TS_HOSTNAME = config.hostname;
+    if (config.tags?.length && !env.TS_TAGS) fileEnv.TS_TAGS = config.tags.join(",");
+    if (config.ssh !== undefined && env.TS_SSH === undefined) fileEnv.TS_SSH = String(config.ssh);
+    if (config.keyExpiry && !env.TS_KEY_EXPIRY) fileEnv.TS_KEY_EXPIRY = config.keyExpiry;
+    if (config.preauthorized !== undefined && env.TS_PREAUTHORIZED === undefined) fileEnv.TS_PREAUTHORIZED = String(config.preauthorized);
+    if (config.reusable !== undefined && env.TS_REUSABLE === undefined) fileEnv.TS_REUSABLE = String(config.reusable);
+    if (config.ephemeral !== undefined && env.TS_EPHEMERAL === undefined) fileEnv.TS_EPHEMERAL = String(config.ephemeral);
+    if (config.acceptDns !== undefined && env.TS_ACCEPT_DNS === undefined) fileEnv.TS_ACCEPT_DNS = String(config.acceptDns);
+    if (config.acceptRoutes !== undefined && env.TS_ACCEPT_ROUTES === undefined) fileEnv.TS_ACCEPT_ROUTES = String(config.acceptRoutes);
+    if (config.cleanupAfter !== undefined && env.TS_CLEANUP_OFFLINE_AFTER === undefined) fileEnv.TS_CLEANUP_OFFLINE_AFTER = String(config.cleanupAfter);
+    if (config.credentialEnv && !env.TS_CREDENTIAL_ENV) fileEnv.TS_CREDENTIAL_ENV = config.credentialEnv;
+    if (config.tagOwner?.length && !env.TS_TAG_OWNER) fileEnv.TS_TAG_OWNER = config.tagOwner.join(",");
+    env = fileEnv;
+  }
+  if (opts.profile) {
+    const valid = [
+      "ci",
+      "container",
+      "vm",
+      "windows",
+      "funnel-app",
+      "subnet-router",
+      "exit-node",
+      "dev",
+    ];
+    if (!valid.includes(opts.profile))
+      throw new Error(`PROFILE_INVALID: expected one of ${valid.join(", ")}`);
+    env = { ...env, TS_PROFILE: opts.profile };
+  }
+  return env;
 }
 
 function resolvedCredentialEnv(): string | undefined {
@@ -187,6 +220,7 @@ function fail(
           retryable: false,
           status: undefined,
         };
+  const docsUrl = ERROR_DOCS[detail.code];
   const envelope: Envelope<never> = {
     ok: false,
     command,
@@ -199,11 +233,15 @@ function fail(
       code: detail.code,
       message: detail.message,
       ...(detail.status ? { status: detail.status } : {}),
+      ...(docsUrl ? { docsUrl } : {}),
     },
   };
   if (program.opts<{ json?: boolean }>().json)
     console.error(JSON.stringify(envelope, null, 2));
-  else console.error(`${detail.code}: ${detail.message}`);
+  else {
+    const suffix = docsUrl ? ` (see ${docsUrl})` : "";
+    console.error(`${detail.code}: ${detail.message}${suffix}`);
+  }
   process.exitCode = detail.retryable ? 75 : exitCodeFor(error);
   throw error;
 }
@@ -224,9 +262,43 @@ function exitCodeFor(error: unknown): number {
   return 1;
 }
 
-function credentialFromOptions(): ReturnType<typeof resolveCredential> {
+const DOCS_BASE = "https://github.com/ongtrieuphuchieu689-7u/tailscale-cli/blob/main/docs";
+const ERROR_DOCS: Record<string, string> = {
+  CREDENTIAL_NOT_FOUND: `${DOCS_BASE}/user_requirement.md#credential-resolution`,
+  CREDENTIAL_AMBIGUOUS: `${DOCS_BASE}/user_requirement.md#credential-resolution`,
+  CREDENTIAL_FORMAT_UNSUPPORTED: `${DOCS_BASE}/user_requirement.md#credential-resolution`,
+  CREDENTIAL_ENV_MISSING: `${DOCS_BASE}/user_requirement.md#credential-resolution`,
+  TAILSCALE_BINARY_NOT_FOUND: `${DOCS_BASE}/user_requirement.md#binary-management`,
+  TAILSCALE_NOT_RUNNING: `${DOCS_BASE}/user_requirement.md#daemon-management`,
+  FUNNEL_EPHEMERAL: `${DOCS_BASE}/user_requirement.md#funnel`,
+  FUNNEL_TARGET_REQUIRED: `${DOCS_BASE}/user_requirement.md#funnel`,
+  FUNNEL_PORT_UNSUPPORTED: `${DOCS_BASE}/user_requirement.md#funnel`,
+  FUNNEL_ATTR_REQUIRED: `${DOCS_BASE}/user_requirement.md#funnel`,
+  FUNNEL_DNS_NOT_PUBLISHED: `${DOCS_BASE}/user_requirement.md#funnel`,
+  DNS_MAGICDNS_CONFIRMATION_REQUIRED: `${DOCS_BASE}/user_requirement.md#dns`,
+  POLICY_FILE_REQUIRED: `${DOCS_BASE}/user_requirement.md#policy`,
+  POLICY_VERIFY_FAILED: `${DOCS_BASE}/user_requirement.md#policy`,
+  PRIVILEGE_REQUIRED: `${DOCS_BASE}/user_requirement.md#privileges`,
+};
+
+async function credentialFromOptions(): Promise<ReturnType<typeof resolveCredential>> {
   const opts = program.opts<CliOptions>();
-  if (!opts.credentialEnv) return resolveCredential();
+  if (!opts.credentialEnv) {
+    const resolution = resolveCredential();
+    if (!resolution.found && resolution.error === "CREDENTIAL_NOT_FOUND") {
+      const prompted = await promptCredential();
+      if (prompted && prompted.startsWith("tskey-client-")) {
+        process.env.TS_CLIENT_SECRET = prompted;
+        return {
+          found: true,
+          source: "interactive-prompt",
+          masked: maskSecret(prompted),
+          candidates: resolution.candidates,
+        };
+      }
+    }
+    return resolution;
+  }
   const value = process.env[opts.credentialEnv]?.trim();
   if (!value)
     return {
@@ -357,7 +429,7 @@ program
     const start = performance.now();
     try {
       const config = resolveConfig(configEnv());
-      const credential = credentialFromOptions();
+      const credential = await credentialFromOptions();
       const auth = authFromOptions();
       let binary: unknown = { found: false };
       try {
@@ -567,17 +639,16 @@ program
 program
   .command("status")
   .description("Show local Tailscale status")
-  .action(async () => {
+  .option("--show-resolution", "include credential resolution source and masked value")
+  .action(async (options: { showResolution?: boolean }) => {
     const start = performance.now();
     try {
-      emit(
-        "status",
-        await new TailscaleLocal(await findTailscale()).status(),
-        [],
-        [],
-        [],
-        start,
-      );
+      const local = new TailscaleLocal(await findTailscale());
+      const statusResult = await local.status();
+      const resolved = options.showResolution
+        ? { status: statusResult, credential: await credentialFromOptions() }
+        : statusResult;
+      emit("status", resolved, [], [], [], start);
     } catch (error) {
       fail("status", error, start);
     }
@@ -1072,8 +1143,9 @@ program
   .command("dns")
   .description("Read tailnet DNS settings; optionally enable MagicDNS")
   .option("--enable-magicdns")
+  .option("--dry-run")
   .option("--yes")
-  .action(async (options: { enableMagicdns?: boolean; yes?: boolean }) => {
+  .action(async (options: { enableMagicdns?: boolean; dryRun?: boolean; yes?: boolean }) => {
     const start = performance.now();
     try {
       const api = new TailscaleApiClient(
@@ -1090,6 +1162,17 @@ program
           throw new Error(
             "DNS_MAGICDNS_CONFIRMATION_REQUIRED: pass --yes to enable MagicDNS",
           );
+        if (options.dryRun) {
+          emit(
+            "dns",
+            { magicDNSEnabled: true, dryRun: true },
+            [],
+            [],
+            [],
+            start,
+          );
+          return;
+        }
         await api.enableMagicDns();
         emit(
           "dns",
