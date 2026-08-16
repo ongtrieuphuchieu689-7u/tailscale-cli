@@ -3,6 +3,7 @@ import {
   ensureHuJsonArrayItem,
   ensureHuJsonKey,
   ensureHuJsonSection,
+  parseHuJson as parseHuJsonDocument,
 } from "../src/hujson.js";
 
 function parseHuJson(text: string): unknown {
@@ -14,6 +15,12 @@ function parseHuJson(text: string): unknown {
 }
 
 describe("ensureHuJsonKey", () => {
+  it("parses comments and trailing commas without changing string contents", () => {
+    expect(parseHuJsonDocument(`{/* note */ "value": ",}", "items": ["*",],}`)).toEqual({
+      value: ",}",
+      items: ["*"],
+    });
+  });
   it("preserves comments when adding to an existing tagOwners block", () => {
     const raw = `{
   // comment at root

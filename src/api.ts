@@ -4,6 +4,7 @@ import type {
   PolicyDocument,
   ResolvedConfig,
 } from "./types.js";
+import { parseHuJson } from "./hujson.js";
 
 const API_BASE = "https://api.tailscale.com/api/v2";
 const OAUTH_TOKEN_URL = `${API_BASE}/oauth/token`;
@@ -249,7 +250,7 @@ export class TailscaleApiClient {
           const contentType = response.headers.get("content-type") ?? "";
           return {
             data: contentType.includes("json")
-              ? (JSON.parse(text) as T)
+              ? parseHuJson<T>(text)
               : (text as T),
             headers: response.headers,
             status: response.status,

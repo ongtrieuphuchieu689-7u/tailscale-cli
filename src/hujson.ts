@@ -84,6 +84,60 @@ function withTrailingComma(body: string): string {
 
 export type HuJsonSectionShape = "object" | "array";
 
+export function parseHuJson<T = unknown>(raw: string): T {
+  let cleaned = "";
+  let inString = false;
+  let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
+  for (let i = 0; i < raw.length; i += 1) {
+    const c = raw[i]!;
+    const next = raw[i + 1];
+    if (lineComment) {
+      if (c === "\n") { lineComment = false; cleaned += c; }
+      else cleaned += " ";
+      continue;
+    }
+    if (blockComment) {
+      if (c === "*" && next === "/") { blockComment = false; cleaned += "  "; i += 1; }
+      else cleaned += c === "\n" ? "\n" : " ";
+      continue;
+    }
+    if (inString) {
+      cleaned += c;
+      if (escaped) escaped = false;
+      else if (c === "\\") escaped = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === "/" && next === "/") { lineComment = true; cleaned += "  "; i += 1; }
+    else if (c === "/" && next === "*") { blockComment = true; cleaned += "  "; i += 1; }
+    else { cleaned += c; if (c === '"') inString = true; }
+  }
+
+  let json = "";
+  inString = false;
+  escaped = false;
+  for (let i = 0; i < cleaned.length; i += 1) {
+    const c = cleaned[i]!;
+    if (inString) {
+      json += c;
+      if (escaped) escaped = false;
+      else if (c === "\\") escaped = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') inString = true;
+    if (c === ",") {
+      let next = i + 1;
+      while (next < cleaned.length && /\s/.test(cleaned[next]!)) next += 1;
+      if (cleaned[next] === "}" || cleaned[next] === "]") continue;
+    }
+    json += c;
+  }
+  return JSON.parse(json) as T;
+}
+
 /**
  * Merge `items` into the `key` section (`{...}` object or `[...]` array) of a
  * HuJSON document while preserving existing comments, formatting and trailing
