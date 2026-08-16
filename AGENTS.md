@@ -58,8 +58,13 @@ The scheme is strictly monotonic: patch grows with `MMDD.HHmm`, so
    use the current time so the patch strictly increases).
 3. `src/cli.ts` reads the version from `package.json` at runtime — do not hardcode it.
 4. Release = push a tag `v<version>` to `main` (must match the `v*.*.*` glob in
-   `.github/workflows/release.yml`). The workflow publishes with npm provenance using the
-   `NPM_TOKEN` repo secret (must be a bypass-2FA token).
+   `.github/workflows/release.yml`). The workflow publishes with npm provenance and
+   authenticates via **Trusted Publisher (OIDC)**, configured on npmjs.com against
+   `ongtrieuphuchieu689-7u/tailscale-cli` + workflow `release.yml` — no token secret used.
+   The workflow must keep `permissions: id-token: write` and must NOT set
+   `NODE_AUTH_TOKEN` (npm uses OIDC automatically; a dead token would break auth).
+   `package.json` needs a `repository.url` matching `https://github.com/ongtrieuphuchieu689-7u/tailscale-cli`
+   (missing `repository` fails provenance with E422).
 5. **Acceptance condition after every release:** from a clean machine (or this one), run
    `npm i tailsacle-cli` (or `npm view tailsacle-cli version`) and confirm the installed
    version equals the published one. If `release.yml` failed (auth, secret missing,

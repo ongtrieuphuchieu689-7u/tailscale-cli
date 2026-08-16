@@ -1,14 +1,18 @@
 {
   "name": "tailsacle-cli",
-  "version": "1.260816.703",
+  "version": "1.260816.708",
   "private": false,
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "bin": {
-    "tailsacle-cli": "./dist/cli.js",
-    "tscli": "./dist/cli.js"
+    "tailsacle-cli": "dist/cli.js",
+    "tscli": "dist/cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ongtrieuphuchieu689-7u/tailscale-cli"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
