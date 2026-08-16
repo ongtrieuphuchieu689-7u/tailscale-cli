@@ -40,6 +40,26 @@ node dist/cli.js status --json
 
 The published package exposes both `tailsacle-cli` and `tscli`.
 
+## GitHub Packages mirror (fast CI installs)
+
+Every tag release is also published to GitHub Packages as
+`@ongtrieuphuchieu689-7u/tailsacle-cli`. Installing it with a repo scoped token inside
+GitHub Actions avoids the npmjs round-trip and is noticeably faster:
+
+```yaml
+- uses: actions/setup-node@v7
+  with:
+    node-version: 24
+    registry-url: https://npm.pkg.github.com
+- run: npm i -D @ongtrieuphuchieu689-7u/tailsacle-cli
+  env:
+    NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+For private packages, keep an `.npmrc` with `@ongtrieuphuchieu689-7u:registry=https://npm.pkg.github.com`
+and token auth. `tailsacle-cli` on npmjs remains the canonical package; the scoped copy is
+a fast mirror for CI only. GitHub Packages requires the token with `packages: read` scope.
+
 ## Common deployment
 
 ```bash
@@ -132,6 +152,11 @@ npm test
 npm run check
 npm run build
 npm run pack:check
+npm run version:bump:verify   # bump version to now (Asia/Ho_Chi_Minh, 1.YYMMDD.1HHmm)
 ```
 
-CI tests Linux and Windows on Node 22 and Node 24. Release publishing is tag-based and uses npm provenance.
+CI tests Linux and Windows on Node 22 and Node 24. Release publishing is tag-based: every
+tag `v*.*.*` runs `release.yml`, which builds with cached node_modules on node24-runtime
+actions, publishes to npmjs with npm provenance (Trusted Publisher OIDC) and mirrors the
+package to GitHub Packages for fast CI installs. Versions use `1.YYMMDD.1HHmm`
+(Asia/Ho_Chi_Minh, 24h), e.g. `1.260816.11417`.

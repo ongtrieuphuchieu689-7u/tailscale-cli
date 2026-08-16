@@ -1,6 +1,6 @@
 {
   "name": "tailsacle-cli",
-  "version": "1.260816.708",
+  "version": "1.260816.11417",
   "private": false,
   "type": "module",
   "engines": {
@@ -35,7 +35,9 @@
     "test": "vitest run",
     "check": "npm run typecheck && npm test",
     "smoke": "npm run build && node dist/cli.js --help && node dist/cli.js agent-manifest --json",
-    "pack:check": "npm run build && npm pack --dry-run"
+    "pack:check": "npm run build && npm pack --dry-run",
+    "version:bump": "node scripts/bump-version.mjs",
+    "version:bump:verify": "node scripts/bump-version.mjs --verify"
   },
   "dependencies": {
     "commander": "^14.0.0",
