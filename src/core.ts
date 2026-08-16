@@ -19,17 +19,18 @@ export function resolveCredential(env: NodeJS.ProcessEnv = process.env): Credent
         ? [exactTrustMatches[0]![0], exactTrustMatches[0]![1]!] as const
         : undefined;
 
+  const candidates = exactTrustMatches.map(([name]) => name);
   if (exactTrustMatches.length > 1 && !explicit && !named) {
-    return { found: false, candidates: exactTrustMatches.map(([name]) => name), error: 'MULTIPLE_CREDENTIALS' };
+    return { found: false, candidates, error: 'MULTIPLE_CREDENTIALS' };
   }
   if (!selected) {
-    return { found: false, candidates: exactTrustMatches.map(([name]) => name), error: 'CREDENTIAL_NOT_FOUND' };
+    return { found: false, candidates, error: 'CREDENTIAL_NOT_FOUND' };
   }
   return {
     found: true,
     source: selected[0],
     masked: maskSecret(selected[1]),
-    candidates: exactTrustMatches.map(([name]) => name),
+    candidates: explicit ? candidates.filter((name) => name !== 'TS_CLIENT_SECRET') : candidates,
   };
 }
 

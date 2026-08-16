@@ -35,10 +35,10 @@ export async function policySync(config: ResolvedConfig, file: string, options: 
   const api = new TailscaleApiClient(config);
   const current = await api.getPolicy();
   const diff = simpleDiff(current.content, desired);
-  if (!diff) return { changed: false, validated: true, written: false, etag: current.etag, diff: '' };
+  if (!diff) return { changed: false, validated: true, written: false, ...(current.etag ? { etag: current.etag } : {}), diff: '' };
 
   await api.validatePolicyText(desired);
-  if (options.dryRun) return { changed: true, validated: true, written: false, etag: current.etag, diff };
+  if (options.dryRun) return { changed: true, validated: true, written: false, ...(current.etag ? { etag: current.etag } : {}), diff };
 
   const approved = await confirm('Apply the policy diff to the tailnet?', options.yes);
   if (!approved) throw new Error('POLICY_CONFIRMATION_REQUIRED: use --yes in CI or confirm in a TTY');
@@ -48,7 +48,7 @@ export async function policySync(config: ResolvedConfig, file: string, options: 
   await api.updatePolicy(desired, current.etag);
   const verified = await api.getPolicy();
   if (!verified.json) throw new Error('POLICY_VERIFY_FAILED: API returned no policy');
-  return { changed: true, validated: true, written: true, etag: verified.etag, backup, diff };
+  return { changed: true, validated: true, written: true, ...(verified.etag ? { etag: verified.etag } : {}), backup, diff };
 }
 
 export function policyFromEnv(env: NodeJS.ProcessEnv = process.env): string | undefined {

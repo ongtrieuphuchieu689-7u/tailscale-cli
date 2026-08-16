@@ -109,7 +109,9 @@ Cleanup is restricted to devices that are offline beyond `TS_CLEANUP_OFFLINE_AFT
 | `TS_AUTH_KEY` | Pre-created node auth key |
 | `TS_API_KEY` | Tailscale API key |
 | `TS_ACCESS_TOKEN` | Bearer access token |
-| `TS_OAUTH_CLIENT_ID` | OAuth client ID |
+| `TS_CLIENT_SECRET` | Tailscale OAuth trust credential (`tskey-client-…`); client ID is derived from it |
+| `TS_CLIENT_ID` | OAuth client ID when the secret is not a self-describing trust credential |
+| `TS_OAUTH_CLIENT_ID` | OAuth client ID (alternative to `TS_CLIENT_ID`) |
 | `TS_OAUTH_CLIENT_SECRET` | OAuth client secret |
 | `TS_POLICY_FILE` | Default policy file path |
 | `TS_CLEANUP_OFFLINE_AFTER` | Cleanup threshold in seconds; default 3600 |

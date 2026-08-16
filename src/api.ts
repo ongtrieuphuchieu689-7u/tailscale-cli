@@ -24,6 +24,13 @@ interface AuthState {
   token?: string;
   clientId?: string;
   clientSecret?: string;
+  formatError?: string;
+}
+
+function parseTrustCredential(value: string): { clientId: string } | undefined {
+  const match = value.match(/^tskey-client-(.+)-(.+)$/);
+  if (!match?.[1] || !match[2]) return undefined;
+  return { clientId: match[1] };
 }
 
 interface OAuthTokenResponse {
@@ -73,13 +80,25 @@ export class TailscaleApiClient {
   constructor(config: ResolvedConfig, env: NodeJS.ProcessEnv = process.env) {
     const accessToken = env.TS_ACCESS_TOKEN ?? env.TS_API_TOKEN;
     const apiKey = env.TS_API_KEY;
-    const clientId = env.TS_OAUTH_CLIENT_ID;
+    const clientId = env.TS_OAUTH_CLIENT_ID ?? env.TS_CLIENT_ID;
     const clientSecret = env.TS_OAUTH_CLIENT_SECRET;
+    const trustCredential = env.TS_CLIENT_SECRET;
     this.config = config;
 
     if (accessToken) this.auth = { source: 'bearer', token: accessToken };
     else if (apiKey) this.auth = { source: 'basic', token: apiKey };
-    else if (clientId && clientSecret) this.auth = { source: 'oauth', clientId, clientSecret };
+    else if (trustCredential) {
+      if (trustCredential.startsWith('tskey-client-')) {
+        const parsed = parseTrustCredential(trustCredential);
+        this.auth = parsed
+          ? { source: 'oauth', clientId: parsed.clientId, clientSecret: trustCredential }
+          : { source: 'oauth', formatError: 'CREDENTIAL_FORMAT_UNSUPPORTED: TS_CLIENT_SECRET is not a valid tskey-client- trust credential' };
+      } else if (clientId) {
+        this.auth = { source: 'oauth', clientId, clientSecret: trustCredential };
+      } else {
+        this.auth = { source: 'oauth', formatError: 'CREDENTIAL_FORMAT_UNSUPPORTED: TS_CLIENT_SECRET must be a tskey-client- trust credential or require TS_CLIENT_ID' };
+      }
+    } else if (clientId && clientSecret) this.auth = { source: 'oauth', clientId, clientSecret };
     else this.auth = { source: 'bearer' };
   }
 
@@ -111,6 +130,7 @@ export class TailscaleApiClient {
   }
 
   private async request<T>(path: string, init: RequestInit = {}, scopes: string[] = [], tags: string[] = []): Promise<{ data: T; headers: Headers; status: number }> {
+    if (this.auth.formatError) throw new ApiError(this.auth.formatError, 401, 'CREDENTIAL_FORMAT_UNSUPPORTED');
     const headers = new Headers(init.headers);
     headers.set('Accept', headers.get('Accept') ?? 'application/json');
     if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
@@ -190,7 +210,8 @@ export class TailscaleApiClient {
 
   async getPolicy(): Promise<PolicySnapshot> {
     const { data, headers } = await this.request<PolicyDocument>(`/tailnet/${this.tailnet()}/acl`, { headers: { Accept: 'application/json' } }, ['policy_file:read']);
-    return { content: JSON.stringify(data, null, 2), json: data, etag: headers.get('etag') ?? undefined };
+    const etag = headers.get('etag') ?? undefined;
+    return { content: JSON.stringify(data, null, 2), json: data, ...(etag ? { etag } : {}) };
   }
 
   async validatePolicy(policy: PolicyDocument): Promise<unknown> {
@@ -211,7 +232,8 @@ export class TailscaleApiClient {
     const headers: Record<string, string> = { 'Content-Type': 'application/hujson', Accept: 'application/json' };
     if (etag) headers['If-Match'] = etag;
     const { data, headers: responseHeaders } = await this.request<PolicyDocument>(`/tailnet/${this.tailnet()}/acl`, { method: 'POST', headers, body: content }, ['policy_file']);
-    return { content: JSON.stringify(data, null, 2), json: data, etag: responseHeaders.get('etag') ?? undefined };
+    const responseEtag = responseHeaders.get('etag') ?? undefined;
+    return { content: JSON.stringify(data, null, 2), json: data, ...(responseEtag ? { etag: responseEtag } : {}) };
   }
 
   async getDns(): Promise<DnsSettings> {
@@ -225,5 +247,11 @@ export class TailscaleApiClient {
 }
 
 export function apiCredentialHint(env: NodeJS.ProcessEnv = process.env): string {
-  return envFirst('TS_API_KEY', 'TS_ACCESS_TOKEN', 'TS_OAUTH_CLIENT_ID') ? 'configured' : 'missing';
+  const hasCredential = Boolean(
+    envFirst('TS_API_KEY', 'TS_ACCESS_TOKEN')
+    || env.TS_CLIENT_SECRET?.trim()
+    || (env.TS_OAUTH_CLIENT_ID && env.TS_OAUTH_CLIENT_SECRET)
+    || (env.TS_CLIENT_ID && env.TS_CLIENT_SECRET),
+  );
+  return hasCredential ? 'configured' : 'missing';
 }

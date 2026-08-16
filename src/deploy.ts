@@ -13,7 +13,8 @@ function normalizeTag(tag: string): string {
 }
 
 export function parseExposure(value: string): Exposure {
-  const [rawTarget, rawPath] = value.trim().split('#', 2);
+  const [first, rawPath] = value.trim().split('#', 2);
+  const rawTarget = first ?? '';
   const path = rawPath ? (rawPath.startsWith('/') ? rawPath : `/${rawPath}`) : undefined;
   const normalized = rawTarget.trim();
   let target: string;
@@ -24,7 +25,12 @@ export function parseExposure(value: string): Exposure {
   else throw new Error(`EXPOSE_INVALID_TARGET: ${normalized}`);
 
   const portMatch = target.match(/:(\d+)(?:\/|$)/);
-  return { target, public: false, path, https: portMatch ? Number(portMatch[1]) : undefined };
+  return {
+    target,
+    public: false,
+    ...(path ? { path } : {}),
+    ...(portMatch ? { https: Number(portMatch[1]) } : {}),
+  };
 }
 
 export function resolveExposures(values: string[], publicFunnel: boolean): Exposure[] {

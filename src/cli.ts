@@ -46,7 +46,7 @@ program.command('doctor').description('Resolve credentials, runtime, local binar
 program.command('deploy').description('Join the tailnet and optionally configure Serve/Funnel').option('--dry-run').option('--yes').option('--expose <target...>').option('--funnel').option('--bin <path>').action(async (options: { dryRun?: boolean; yes?: boolean; expose?: string[]; funnel?: boolean; bin?: string }) => {
   try {
     const config = resolveConfig();
-    const result = await deploy(config, { dryRun: Boolean(options.dryRun), yes: Boolean(options.yes), expose: options.expose ?? [], funnel: Boolean(options.funnel), bin: options.bin });
+    const result = await deploy(config, { dryRun: Boolean(options.dryRun), yes: Boolean(options.yes), expose: options.expose ?? [], funnel: Boolean(options.funnel), ...(options.bin ? { bin: options.bin } : {}) });
     emit('deploy', result, config.warnings, options.dryRun ? [] : ['authenticate node', 'configure Tailscale state', ...(result.exposures.length ? ['configure Serve/Funnel'] : [])], process.platform === 'win32' ? [] : ['root/admin may be required by tailscaled']);
   } catch (error) { fail('deploy', error); }
 });
