@@ -77,9 +77,19 @@ jobs:
           '@ | Set-Content -Encoding utf8 opencode.json
           $pass = node -e "console.log(require('node:crypto').randomBytes(8).toString('hex'))"
           Set-Content -NoNewline -Encoding ascii serve-pass.txt $pass
-          $env:OPENCODE_SERVE_PASS = $pass
+          @"
+          @echo off
+          set OPENCODE_SERVE_PASS=$pass
+          opencode serve --port 4096 >> "%~dp0opencode-serve.log" 2>&1
+          "@ | Set-Content -Encoding ascii serve.cmd
           Write-Host "opencode workspace: $(Get-Location)"
-          Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','opencode serve --port 4096' -RedirectStandardOutput opencode-serve.log -RedirectStandardError opencode-serve.err.log -WindowStyle Hidden
+          # WMI-spawned processes are not children of the step shell, so the
+          # runner's step cleanup cannot kill them (Start-Process children die
+          # at step boundaries on Windows).
+          $null = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+            CommandLine = "cmd.exe /d /c `"$(Join-Path (Get-Location) 'serve.cmd')`""
+            CurrentDirectory = (Get-Location).Path
+          }
           $ready = $false
           for ($i = 0; $i -lt 90; $i++) {
             try { Invoke-WebRequest -Uri 'http://127.0.0.1:4096/' -UseBasicParsing -TimeoutSec 5 | Out-Null; $ready = $true; break } catch { Start-Sleep -Seconds 2 }
@@ -87,7 +97,6 @@ jobs:
           if (-not $ready) {
             Write-Host "serve failed to start"
             if (Test-Path opencode-serve.log) { Get-Content opencode-serve.log -Tail 40 }
-            if (Test-Path opencode-serve.err.log) { Get-Content opencode-serve.err.log -Tail 40 }
             exit 1
           }
           Write-Host "opencode serve ready on :4096"
@@ -118,14 +127,29 @@ jobs:
           if ($keep -lt 60) { $keep = 60 }
           $deadline = (Get-Date).AddSeconds($keep)
           $last = 0
+          $launcher = Join-Path (Get-Location) 'serve.cmd'
+          function Start-Serve {
+            Get-NetTCPConnection -LocalPort 4096 -State Listen -ErrorAction SilentlyContinue |
+              ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+            Start-Sleep -Seconds 1
+            $null = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+              CommandLine = "cmd.exe /d /c `"$launcher`""
+              CurrentDirectory = (Get-Location).Path
+            }
+          }
           Write-Host "keeping alive until $($deadline.ToString('o'))"
+          $up = $false
+          try { Invoke-WebRequest -Uri 'http://127.0.0.1:4096/' -UseBasicParsing -TimeoutSec 10 | Out-Null; $up = $true } catch { }
+          if (-not $up) {
+            Write-Host "[keepalive] serve down, restarting $(Get-Date -Format o)"
+            Start-Serve
+          }
           while ((Get-Date) -lt $deadline) {
             $ok = $true
             try { Invoke-WebRequest -Uri 'http://127.0.0.1:4096/' -UseBasicParsing -TimeoutSec 10 | Out-Null } catch { $ok = $false }
             if (-not $ok) {
               Write-Host "[keepalive] serve down, restarting $(Get-Date -Format o)"
-              $env:OPENCODE_SERVE_PASS = (Get-Content serve-pass.txt -Raw).Trim()
-              Start-Process -FilePath 'cmd.exe' -ArgumentList '/c','opencode serve --port 4096' -RedirectStandardOutput opencode-serve.log -RedirectStandardError opencode-serve.err.log -WindowStyle Hidden
+              Start-Serve
             }
             $markers = [int]((Get-Date -UFormat %s) / 600)
             if ($markers -gt $last) {
