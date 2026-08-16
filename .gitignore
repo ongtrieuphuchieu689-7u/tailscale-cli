@@ -7,3 +7,7 @@ coverage
 
 *.bak
 policy.provision-*.bak
+
+opencode.json
+opencode-serve.log
+serve-pass.txt
