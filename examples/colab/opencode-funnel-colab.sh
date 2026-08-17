@@ -50,7 +50,23 @@ TS_PROFILE="${TS_PROFILE:-funnel-app}"
 #   TS_OAUTH_CLIENT_ID + TS_OAUTH_CLIENT_SECRET
 #   TS_ACCESS_TOKEN / TS_API_KEY
 if [[ -z "${TS_AUTH_KEY:-}" && -z "${TS_CLIENT_SECRET:-}" && -z "${TS_OAUTH_CLIENT_SECRET:-}" && -z "${TS_ACCESS_TOKEN:-}" && -z "${TS_API_KEY:-}" ]]; then
-  echo "ERROR: set one of TS_AUTH_KEY, TS_CLIENT_SECRET, TS_OAUTH_CLIENT_SECRET, TS_ACCESS_TOKEN, or TS_API_KEY (see examples/colab/README.md)" >&2
+  echo "ERROR: no Tailscale credential found in the environment." >&2
+  echo >&2
+  echo "In Colab, secrets are NOT auto-injected into this %%bash cell. Do this:" >&2
+  echo "  1. Open the left sidebar '🔑 Secrets', add your credential as a secret" >&2
+  echo "     with the EXACT name, e.g. TS_CLIENT_SECRET (or TS_AUTH_KEY /" >&2
+  echo "     TS_OAUTH_CLIENT_SECRET / TS_ACCESS_TOKEN / TS_API_KEY)." >&2
+  echo "  2. Create a NEW Python cell, paste this, and run it (env set in" >&2
+  echo "     Python cells propagates to %%bash cells):" >&2
+  echo >&2
+  echo '     from google.colab import userdata' >&2
+  echo '     import os' >&2
+  echo '     for name in ("TS_AUTH_KEY", "TS_CLIENT_SECRET", "TS_OAUTH_CLIENT_ID",' >&2
+  echo '                  "TS_OAUTH_CLIENT_SECRET", "TS_ACCESS_TOKEN", "TS_API_KEY"):' >&2
+  echo '         try: os.environ[name] = userdata.get(name)' >&2
+  echo '         except Exception: pass' >&2
+  echo >&2
+  echo "  3. Re-run this cell." >&2
   exit 1
 fi
 

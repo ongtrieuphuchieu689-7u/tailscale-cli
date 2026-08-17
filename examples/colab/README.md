@@ -13,14 +13,17 @@ và verify DNS + TLS trước khi báo thành công.
    (OAuth trust credential `tskey-client-…` được khuyến nghị) hoặc một node auth
    key `tskey-auth-…`.
 3. Lưu credential vào **Secrets của Colab** (icon 🔑 bên trái, giống GitHub
-   Secrets — private, không bị lộ khi share notebook):
+   Secrets — private, không bị lộ khi share notebook). **Tên secret phải đúng
+   chính xác** một trong các tên dưới (Colab không tự inject vào cell bash —
+   bước 4 làm việc đó):
    - `TS_CLIENT_SECRET` (OAuth trust credential `tskey-client-…` — dùng một
      mình được, client ID tự suy ra), **hoặc**
    - `TS_OAUTH_CLIENT_ID` + `TS_OAUTH_CLIENT_SECRET`, **hoặc**
    - `TS_AUTH_KEY`, **hoặc**
    - `TS_ACCESS_TOKEN` / `TS_API_KEY`
-4. Dán cell Python này (load secrets thành env, giống như GitHub Actions inject
-   env từ secrets) rồi chạy **trước** cell bash:
+4. **BẮT BUỘC:** dán cell Python này vào một cell, chạy **trước** cell bash
+   (env set trong cell Python sẽ truyền vào cell `%%bash`; nếu bỏ qua bước này
+   cell bash báo lỗi "no Tailscale credential found"):
 
    ```python
    from google.colab import userdata
