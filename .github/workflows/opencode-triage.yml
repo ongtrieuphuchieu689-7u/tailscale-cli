@@ -13,26 +13,11 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      - name: Check account age
-        id: check
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const user = await github.rest.users.getByUsername({
-              username: context.payload.issue.user.login
-            });
-            const created = new Date(user.data.created_at);
-            const days = (Date.now() - created) / (1000 * 60 * 60 * 24);
-            return days >= 30;
-          result-encoding: string
-
       - uses: actions/checkout@v7
-        if: steps.check.outputs.result == 'true'
         with:
           fetch-depth: 1
 
       - uses: anomalyco/opencode/github@latest
-        if: steps.check.outputs.result == 'true'
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
