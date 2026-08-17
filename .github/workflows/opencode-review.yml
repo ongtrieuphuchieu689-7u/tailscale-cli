@@ -39,7 +39,6 @@ jobs:
           GHCLI_TOKEN_OWNER: ${{ secrets.GHCLI_TOKEN_OWNER }}
         with:
           model: ${{ inputs.model || 'opencode/big-pickle' }}
-          token: ${{ secrets.GHCLI_TOKEN_OWNER }}
           use_github_token: true
           prompt: |
             Review this pull request:

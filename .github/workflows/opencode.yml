@@ -33,6 +33,5 @@ jobs:
           GHCLI_TOKEN_OWNER: ${{ secrets.GHCLI_TOKEN_OWNER }}
         with:
           model: opencode/big-pickle
-          token: ${{ secrets.GHCLI_TOKEN_OWNER }}
           use_github_token: true
           share: true
