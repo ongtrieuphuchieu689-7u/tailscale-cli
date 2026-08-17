@@ -40,6 +40,14 @@ node dist/cli.js status --json
 
 The published package exposes both `tailsacle-cli` and `tscli`.
 
+## Examples
+
+- `examples/colab/opencode-funnel-colab.sh` — one-cell Google Colab script that
+  installs `opencode-ai` + `tailsacle-cli`, grants opencode full permissions
+  (the headless equivalent of `opencode --auto`), starts `opencode serve` and
+  publishes it on the public internet through a Tailscale Funnel, printing the
+  Funnel URL.
+
 ## GitHub Packages mirror (fast CI installs)
 
 Every tag release is also published to GitHub Packages as
