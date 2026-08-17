@@ -94,13 +94,18 @@ export function parseHuJson<T = unknown>(raw: string): T {
     const c = raw[i]!;
     const next = raw[i + 1];
     if (lineComment) {
-      if (c === "\n") { lineComment = false; cleaned += c; }
-      else cleaned += " ";
+      if (c === "\n") {
+        lineComment = false;
+        cleaned += c;
+      } else cleaned += " ";
       continue;
     }
     if (blockComment) {
-      if (c === "*" && next === "/") { blockComment = false; cleaned += "  "; i += 1; }
-      else cleaned += c === "\n" ? "\n" : " ";
+      if (c === "*" && next === "/") {
+        blockComment = false;
+        cleaned += "  ";
+        i += 1;
+      } else cleaned += c === "\n" ? "\n" : " ";
       continue;
     }
     if (inString) {
@@ -110,9 +115,18 @@ export function parseHuJson<T = unknown>(raw: string): T {
       else if (c === '"') inString = false;
       continue;
     }
-    if (c === "/" && next === "/") { lineComment = true; cleaned += "  "; i += 1; }
-    else if (c === "/" && next === "*") { blockComment = true; cleaned += "  "; i += 1; }
-    else { cleaned += c; if (c === '"') inString = true; }
+    if (c === "/" && next === "/") {
+      lineComment = true;
+      cleaned += "  ";
+      i += 1;
+    } else if (c === "/" && next === "*") {
+      blockComment = true;
+      cleaned += "  ";
+      i += 1;
+    } else {
+      cleaned += c;
+      if (c === '"') inString = true;
+    }
   }
 
   let json = "";

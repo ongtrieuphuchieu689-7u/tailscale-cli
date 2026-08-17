@@ -89,7 +89,10 @@ program
     "--client-id <id>",
     "OAuth client id (overrides TS_CLIENT_ID for this run; visible in process listings)",
   )
-  .option("--update-bin", "download the latest stable Tailscale client into the package cache");
+  .option(
+    "--update-bin",
+    "download the latest stable Tailscale client into the package cache",
+  );
 
 program.hook("preAction", () => applyCredentialFlags());
 
@@ -589,7 +592,10 @@ program
   .option("--ssh", "enable Tailscale SSH on this node (default: true)")
   .option("--no-ssh", "disable Tailscale SSH on this node")
   .option("--state-dir <path>", "state directory for tailscaled")
-  .option("--backup-dir <path>", "directory for policy backups (default: ./.tailscale-cli)")
+  .option(
+    "--backup-dir <path>",
+    "directory for policy backups (default: ./.tailscale-cli)",
+  )
   .option(
     "--key-expiry <value>",
     "auth-key expiry: max (documented 90-day ceiling), unlimited, or seconds",
@@ -668,7 +674,10 @@ program
   .option("--ssh", "enable Tailscale SSH on this node (default: true)")
   .option("--no-ssh", "disable Tailscale SSH on this node")
   .option("--state-dir <path>", "state directory for tailscaled")
-  .option("--backup-dir <path>", "directory for policy backups (default: ./.tailscale-cli)")
+  .option(
+    "--backup-dir <path>",
+    "directory for policy backups (default: ./.tailscale-cli)",
+  )
   .option(
     "--key-expiry <value>",
     "auth-key expiry: max (documented 90-day ceiling), unlimited, or seconds",
@@ -1365,7 +1374,10 @@ program
   .option("--sync")
   .option("--dry-run")
   .option("--yes")
-  .option("--backup-dir <path>", "directory for policy backups (default: ./.tailscale-cli)")
+  .option(
+    "--backup-dir <path>",
+    "directory for policy backups (default: ./.tailscale-cli)",
+  )
   .action(
     async (options: {
       file?: string;

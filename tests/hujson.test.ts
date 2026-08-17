@@ -16,7 +16,9 @@ function parseHuJson(text: string): unknown {
 
 describe("ensureHuJsonKey", () => {
   it("parses comments and trailing commas without changing string contents", () => {
-    expect(parseHuJsonDocument(`{/* note */ "value": ",}", "items": ["*",],}`)).toEqual({
+    expect(
+      parseHuJsonDocument(`{/* note */ "value": ",}", "items": ["*",],}`),
+    ).toEqual({
       value: ",}",
       items: ["*"],
     });

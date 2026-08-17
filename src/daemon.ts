@@ -89,9 +89,7 @@ async function resolveDaemonBin(): Promise<string> {
   return (await cachedDaemonPath()) ?? "tailscaled";
 }
 
-async function startUserspaceDaemon(
-  stateDir?: string,
-): Promise<{
+async function startUserspaceDaemon(stateDir?: string): Promise<{
   started: boolean;
   command: string;
 }> {
@@ -142,7 +140,8 @@ async function startUserspaceDaemon(
         command: command.join(" "),
         startedAt: new Date().toISOString(),
       });
-      if (!process.env.TS_TAILSCALE_SOCKET) process.env.TS_TAILSCALE_SOCKET = socket;
+      if (!process.env.TS_TAILSCALE_SOCKET)
+        process.env.TS_TAILSCALE_SOCKET = socket;
       return { started: true, command: command.join(" ") };
     }
   }

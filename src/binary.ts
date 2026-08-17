@@ -91,7 +91,9 @@ function pinnedVersion(): string | undefined {
 async function sha256For(url: string): Promise<string> {
   const raw = (await fetchText(url)).trim().split(/\s+/)[0];
   if (!raw || !/^[0-9a-f]{64}$/i.test(raw))
-    throw new Error("BIN_SHA256_INVALID: checksum file did not contain a valid SHA256");
+    throw new Error(
+      "BIN_SHA256_INVALID: checksum file did not contain a valid SHA256",
+    );
   return raw;
 }
 
