@@ -193,6 +193,7 @@ export function resolveConfig(
       "REUSABLE_KEY_DEFAULTED: auth key created for this long-lived node is reusable until it expires",
     );
 
+  const stateDir = env.TS_STATE_DIR?.trim() || undefined;
   return {
     profile,
     tailnet: env.TS_TAILNET?.trim() || "-",
@@ -209,6 +210,7 @@ export function resolveConfig(
       profile === "subnet-router" || profile === "exit-node",
     ),
     cleanupAfter: number(env.TS_CLEANUP_OFFLINE_AFTER, 3600),
+    ...(stateDir ? { stateDir } : {}),
     source: {
       profile: env.TS_PROFILE ? "TS_PROFILE" : "runtime",
       hostname: env.TS_HOSTNAME

@@ -186,6 +186,7 @@ export async function ensureFunnelReadiness(
     yes: boolean;
     applyPolicy?: boolean;
     credentialEnvName?: string;
+    backupDir?: string;
   },
 ): Promise<string[]> {
   const api = new TailscaleApiClient(
@@ -217,6 +218,7 @@ export async function ensureFunnelReadiness(
     ...(options.credentialEnvName
       ? { credentialEnvName: options.credentialEnvName }
       : {}),
+    ...(options.backupDir ? { backupDir: options.backupDir } : {}),
   });
   warnings.push(...provisioned.warnings);
   return warnings;
@@ -235,11 +237,14 @@ export async function deploy(
     bin?: string;
     credentialEnvName?: string;
     tagOwner?: string[];
+    backupDir?: string;
   },
 ): Promise<DeploymentResult> {
   const warnings: string[] = [];
   const binary = await tailscaleVersion(options.bin);
-  const daemon = await ensureDaemon();
+  const daemon = await ensureDaemon(
+    config.stateDir ? { stateDir: config.stateDir } : undefined,
+  );
   if (!daemon.running) warnings.push(...daemon.warnings);
   else if (daemon.actions.length)
     warnings.push(`DAEMON_STARTED: ${daemon.actions.join("; ")}`);
@@ -315,6 +320,7 @@ export async function deploy(
           ...(options.credentialEnvName
             ? { credentialEnvName: options.credentialEnvName }
             : {}),
+          ...(options.backupDir ? { backupDir: options.backupDir } : {}),
         });
         warnings.push(...provisioned.warnings);
       } catch (provisionError) {
@@ -360,6 +366,7 @@ export async function deploy(
         ...(options.credentialEnvName
           ? { credentialEnvName: options.credentialEnvName }
           : {}),
+        ...(options.backupDir ? { backupDir: options.backupDir } : {}),
       })),
     );
   }

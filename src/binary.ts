@@ -78,6 +78,23 @@ async function fetchText(url: string): Promise<string> {
   return response.text();
 }
 
+function pinnedVersion(): string | undefined {
+  const value = process.env.TS_BIN_VERSION?.trim();
+  if (!value) return undefined;
+  if (!/^\d+\.\d+\.\d+$/.test(value))
+    throw new Error(
+      "BIN_VERSION_INVALID: TS_BIN_VERSION must be a numeric version like 1.76.0",
+    );
+  return value;
+}
+
+async function sha256For(url: string): Promise<string> {
+  const raw = (await fetchText(url)).trim().split(/\s+/)[0];
+  if (!raw || !/^[0-9a-f]{64}$/i.test(raw))
+    throw new Error("BIN_SHA256_INVALID: checksum file did not contain a valid SHA256");
+  return raw;
+}
+
 export async function latestStableInfo(): Promise<{
   version: string;
   tarball: string;
@@ -85,25 +102,30 @@ export async function latestStableInfo(): Promise<{
   url: string;
   sha256Url: string;
 }> {
+  const arch = detectArch();
+  const pinned = pinnedVersion();
+  if (pinned) {
+    const tarball = `tailscale_${pinned}_${arch}.tgz`;
+    const sha256 = await sha256For(`${STABLE_BASE}/${tarball}.sha256`);
+    return {
+      version: pinned,
+      tarball,
+      sha256,
+      url: `${STABLE_BASE}/${tarball}`,
+      sha256Url: `${STABLE_BASE}/${tarball}.sha256`,
+    };
+  }
   const index = JSON.parse(await fetchText(STABLE_INDEX_URL)) as {
     Version?: string;
     Tarballs?: Record<string, string>;
   };
   const version = index.Version;
-  const arch = detectArch();
   const tarball = index.Tarballs?.[arch];
   if (!version || !tarball)
     throw new Error(
       "BIN_INDEX_INCOMPLETE: could not determine the latest stable build",
     );
-  const sha256Raw = (await fetchText(`${STABLE_BASE}/${tarball}.sha256`))
-    .trim()
-    .split(/\s+/)[0];
-  if (!sha256Raw || !/^[0-9a-f]{64}$/i.test(sha256Raw))
-    throw new Error(
-      "BIN_SHA256_INVALID: checksum file did not contain a valid SHA256",
-    );
-  const sha256 = sha256Raw;
+  const sha256 = await sha256For(`${STABLE_BASE}/${tarball}.sha256`);
   return {
     version,
     tarball,
@@ -316,30 +338,40 @@ export interface WindowsInstallResult {
 }
 
 export async function latestWindowsInstallInfo(): Promise<WindowsInstallResult> {
+  let arch = detectArch();
+  if (arch === "386") arch = "x86";
+  const pinned = pinnedVersion();
+  if (pinned) {
+    const msi = `tailscale-setup_${pinned}_${arch}.msi`;
+    const sha256 = await sha256For(`${STABLE_BASE}/${msi}.sha256`);
+    return {
+      version: pinned,
+      msi,
+      sha256,
+      url: `${STABLE_BASE}/${msi}`,
+      sha256Url: `${STABLE_BASE}/${msi}.sha256`,
+      arch,
+      cachedPath: join(cacheBinDir(), msi),
+      installed: false,
+    };
+  }
   const index = JSON.parse(await fetchText(STABLE_INDEX_URL)) as {
     Version?: string;
     MSIs?: Record<string, string>;
   };
   const version = index.Version;
-  let arch = detectArch();
-  if (arch === "386") arch = "x86";
   const msi = index.MSIs?.[arch];
   if (!version || !msi)
     throw new Error(
       "BIN_INDEX_INCOMPLETE: could not determine the latest stable Windows MSI",
     );
-  const sha256Url = `${STABLE_BASE}/${msi}.sha256`;
-  const sha256Raw = (await fetchText(sha256Url)).trim().split(/\s+/)[0];
-  if (!sha256Raw || !/^[0-9a-f]{64}$/i.test(sha256Raw))
-    throw new Error(
-      "BIN_SHA256_INVALID: checksum file did not contain a valid SHA256",
-    );
+  const sha256 = await sha256For(`${STABLE_BASE}/${msi}.sha256`);
   return {
     version,
     msi,
-    sha256: sha256Raw,
+    sha256,
     url: `${STABLE_BASE}/${msi}`,
-    sha256Url,
+    sha256Url: `${STABLE_BASE}/${msi}.sha256`,
     arch,
     cachedPath: join(cacheBinDir(), msi),
     installed: false,

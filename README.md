@@ -146,9 +146,11 @@ Cleanup is restricted to devices that are offline beyond `TS_CLEANUP_OFFLINE_AFT
 | `TS_TAG_OWNER` | Comma-separated owners used when auto-provisioning missing `tagOwners` (otherwise a single existing owner set is reused; mixed-owner policies require this or `--tag-owner`) |
 | `TS_PROTECTED_DEVICES` | Comma-separated protected device IDs/names |
 | `TS_BIN_DIR` | Binary cache directory for `update-bin`/auto-download |
+| `TS_BIN_VERSION` | Pin a specific stable version for `update-bin`/auto-download (e.g. `1.76.0`); unset = latest stable |
 | `TS_TAILSCALE_BIN` | Explicit Tailscale binary path |
 | `TS_TAILSCALE_SOCKET` | Explicit path to the tailscaled Unix socket (default: `/var/run/tailscale/tailscaled.sock`) |
 | `TS_TAILSCALED_STATE` | State path for a userspace tailscaled (default `/var/lib/tailscale/tailscaled.state`) |
+| `TS_STATE_DIR` | State directory for a userspace tailscaled; state file is `<dir>/tailscaled.state` (overrides the cache-based default) |
 | `TS_CLI_YES` | `true`/`1` answers every confirmation like `--yes` (for embedded automation) |
 | `TS_UNATTENDED` | Windows unattended join intent |
 
@@ -189,6 +191,10 @@ are gated behind explicit flags so a plain `--yes` never quietly rewrites tailne
 |---|---|
 | `--apply-policy` | Allow HuJSON-preserving `tagOwners`/`nodeAttrs` provisioning (with plan + warning) |
 | `--enable-https` | Allow enabling tailnet-wide HTTPS (required for Serve/Funnel) |
+| `--ssh` / `--no-ssh` | Enable/disable Tailscale SSH on the joined node (default `true`; overrides `TS_SSH`) |
+| `--state-dir <path>` | State directory for a userspace tailscaled (overrides `TS_STATE_DIR`) |
+| `--backup-dir <path>` | Directory for policy backups, default `./.tailscale-cli` (overrides the side-by-side `${file}.bak` default) |
+| `--update-bin` (global flag) | Download the latest stable Tailscale client into the package cache, e.g. `tailsacle-cli --update-bin` (same as the `update-bin` subcommand; `TS_BIN_VERSION` pins a version) |
 | `--key-expiry <value>` | Auth-key expiry for this run (`max`, `unlimited`, seconds; overrides `TS_KEY_EXPIRY`). `max`/`unlimited` map to the documented 90-day ceiling — not an API-discovered maximum; explicit seconds above the ceiling are clamped with a `KEY_EXPIRY_CLAMPED` warning |
 | `--tag-owner <owner...>` | Owner(s) for auto-provisioned `tagOwners` (overrides `TS_TAG_OWNER`) |
 | `--cleanup` | Run the exact-match offline device cleanup at the end of a deploy on **any** profile (auto-cleanup otherwise defaults to CI/container) |

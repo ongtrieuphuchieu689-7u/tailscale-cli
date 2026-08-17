@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { chmod, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { chmod, mkdtemp, writeFile, rm, rename } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TailscaleLocal } from "../src/tailscale.js";
+import { cacheBinDir } from "../src/binary.js";
 
 async function fakeTailscaleBin(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "tscli-shim-"));
@@ -57,11 +59,18 @@ describe("TailscaleLocal --socket pass-through", () => {
     async () => {
       const previous = process.env.TS_TAILSCALE_SOCKET;
       if (previous !== undefined) delete process.env.TS_TAILSCALE_SOCKET;
+      // Temporarily hide the tracked daemon pidfile so trackedUserspaceSocket()
+      // does not inject a socket path from a prior daemon start.
+      const pidFile = join(cacheBinDir(), "daemon.pid.json");
+      const hiddenPidFile = `${pidFile}.test-hidden`;
+      const hadPidFile = existsSync(pidFile);
+      if (hadPidFile) await rename(pidFile, hiddenPidFile);
       try {
         const shim = await fakeTailscaleBin();
         const result = await new TailscaleLocal(shim).run(["status"]);
         expect(result.stdout.split("\n")[0]).toBe("status");
       } finally {
+        if (hadPidFile) await rename(hiddenPidFile, pidFile);
         if (previous !== undefined) process.env.TS_TAILSCALE_SOCKET = previous;
       }
     },

@@ -88,9 +88,47 @@ program
   .option(
     "--client-id <id>",
     "OAuth client id (overrides TS_CLIENT_ID for this run; visible in process listings)",
-  );
+  )
+  .option("--update-bin", "download the latest stable Tailscale client into the package cache");
 
 program.hook("preAction", () => applyCredentialFlags());
+
+async function handleGlobalFlags(): Promise<boolean> {
+  const opts = program.opts<CliOptions>();
+  if (!opts.updateBin) return false;
+  const start = performance.now();
+  try {
+    if (process.platform === "win32") {
+      const result = await installWindowsMsi({});
+      emit(
+        "update-bin",
+        {
+          installed: true,
+          version: result.version,
+          msi: result.msi,
+          cachedPath: result.cachedPath,
+        },
+        ["WINDOWS_MSI_INSTALLED: Tailscale MSI installed silently"],
+        ["download Tailscale MSI", "install Tailscale MSI silently"],
+        ["windows administrator"],
+        start,
+      );
+    } else {
+      const result = await updateCacheBinary({});
+      emit(
+        "update-bin",
+        result,
+        [],
+        ["download Tailscale client into cache", "update cache binary"],
+        [],
+        start,
+      );
+    }
+    return true;
+  } catch (error) {
+    fail("update-bin", error, start);
+  }
+}
 
 interface CliOptions {
   json?: boolean;
@@ -99,6 +137,7 @@ interface CliOptions {
   profile?: string;
   clientSecret?: string;
   clientId?: string;
+  updateBin?: boolean;
 }
 
 function configPath(): string | undefined {
@@ -547,6 +586,10 @@ program
   .option("--enable-https")
   .option("--cleanup")
   .option("--bin <path>")
+  .option("--ssh", "enable Tailscale SSH on this node (default: true)")
+  .option("--no-ssh", "disable Tailscale SSH on this node")
+  .option("--state-dir <path>", "state directory for tailscaled")
+  .option("--backup-dir <path>", "directory for policy backups (default: ./.tailscale-cli)")
   .option(
     "--key-expiry <value>",
     "auth-key expiry: max (documented 90-day ceiling), unlimited, or seconds",
@@ -565,6 +608,9 @@ program
       enableHttps?: boolean;
       cleanup?: boolean;
       bin?: string;
+      ssh?: boolean;
+      stateDir?: string;
+      backupDir?: string;
       keyExpiry?: string;
       tagOwner?: string[];
     }) => {
@@ -574,6 +620,8 @@ program
         const credentialEnv = resolvedCredentialEnv();
         const tagOwner = options.tagOwner ?? envTagOwner();
         const config = resolveConfig(configEnv());
+        if (options.ssh !== undefined) config.ssh = options.ssh;
+        if (options.stateDir) config.stateDir = options.stateDir;
         const result = await deployCommand(config, {
           dryRun: Boolean(options.dryRun),
           yes: Boolean(options.yes),
@@ -583,6 +631,7 @@ program
           enableHttps: Boolean(options.enableHttps),
           cleanup: Boolean(options.cleanup),
           ...(options.bin ? { bin: options.bin } : {}),
+          ...(options.backupDir ? { backupDir: options.backupDir } : {}),
           ...(tagOwner?.length ? { tagOwner } : {}),
           ...(credentialEnv ? { credentialEnvName: credentialEnv } : {}),
         });
@@ -616,6 +665,10 @@ program
   .option("--yes")
   .option("--apply-policy")
   .option("--cleanup")
+  .option("--ssh", "enable Tailscale SSH on this node (default: true)")
+  .option("--no-ssh", "disable Tailscale SSH on this node")
+  .option("--state-dir <path>", "state directory for tailscaled")
+  .option("--backup-dir <path>", "directory for policy backups (default: ./.tailscale-cli)")
   .option(
     "--key-expiry <value>",
     "auth-key expiry: max (documented 90-day ceiling), unlimited, or seconds",
@@ -630,6 +683,9 @@ program
       yes?: boolean;
       applyPolicy?: boolean;
       cleanup?: boolean;
+      ssh?: boolean;
+      stateDir?: string;
+      backupDir?: string;
       keyExpiry?: string;
       tagOwner?: string[];
     }) => {
@@ -638,13 +694,17 @@ program
         if (options.keyExpiry) process.env.TS_KEY_EXPIRY = options.keyExpiry;
         const credentialEnv = resolvedCredentialEnv();
         const tagOwner = options.tagOwner ?? envTagOwner();
-        const result = await deployCommand(resolveConfig(configEnv()), {
+        const config = resolveConfig(configEnv());
+        if (options.ssh !== undefined) config.ssh = options.ssh;
+        if (options.stateDir) config.stateDir = options.stateDir;
+        const result = await deployCommand(config, {
           dryRun: Boolean(options.dryRun),
           yes: Boolean(options.yes),
           expose: [],
           funnel: false,
           applyPolicy: Boolean(options.applyPolicy),
           cleanup: Boolean(options.cleanup),
+          ...(options.backupDir ? { backupDir: options.backupDir } : {}),
           ...(tagOwner?.length ? { tagOwner } : {}),
           ...(credentialEnv ? { credentialEnvName: credentialEnv } : {}),
         });
@@ -870,6 +930,8 @@ interface FunnelOptions {
   applyPolicy?: boolean;
   enableHttps?: boolean;
   verifyTimeout?: number;
+  ssh?: boolean;
+  stateDir?: string;
 }
 
 function parseFunnelExpose(value: string): {
@@ -922,6 +984,9 @@ program
   .option("--yes")
   .option("--apply-policy")
   .option("--enable-https")
+  .option("--ssh", "enable Tailscale SSH on this node (default: true)")
+  .option("--no-ssh", "disable Tailscale SSH on this node")
+  .option("--state-dir <path>", "state directory for tailscaled")
   .option(
     "--verify-timeout <sec>",
     "public DNS and live-endpoint verification timeout",
@@ -930,6 +995,8 @@ program
     const start = performance.now();
     try {
       const config = resolveConfig(configEnv());
+      if (options.ssh !== undefined) config.ssh = options.ssh;
+      if (options.stateDir) config.stateDir = options.stateDir;
       const local = new TailscaleLocal(await findTailscale());
       const credentialEnvNameResolved = resolvedCredentialEnv();
       const httpsPort = options.https ? Number(options.https) : 443;
@@ -948,7 +1015,9 @@ program
         throw new Error(
           "FUNNEL_EPHEMERAL: the node is ephemeral so Funnel will never publish public DNS; set TS_EPHEMERAL=false (or use TS_PROFILE=funnel-app which defaults to non-ephemeral) and re-run",
         );
-      const daemon = await ensureDaemon();
+      const daemon = await ensureDaemon(
+        config.stateDir ? { stateDir: config.stateDir } : undefined,
+      );
       if (!daemon.running) warnings.push(...daemon.warnings);
       const exposed = (options.expose ?? [])
         .filter(Boolean)
@@ -1296,12 +1365,14 @@ program
   .option("--sync")
   .option("--dry-run")
   .option("--yes")
+  .option("--backup-dir <path>", "directory for policy backups (default: ./.tailscale-cli)")
   .action(
     async (options: {
       file?: string;
       sync?: boolean;
       dryRun?: boolean;
       yes?: boolean;
+      backupDir?: string;
     }) => {
       const start = performance.now();
       try {
@@ -1314,6 +1385,7 @@ program
         const result = await policySync(resolveConfig(configEnv()), file, {
           dryRun: Boolean(options.dryRun ?? !options.sync),
           yes: Boolean(options.yes),
+          ...(options.backupDir ? { backupDir: options.backupDir } : {}),
           ...(credentialEnv ? { credentialEnvName: credentialEnv } : {}),
         });
         emit(
@@ -1415,6 +1487,11 @@ program
 const rawArgs = process.argv.slice(2);
 
 void (async () => {
+  if (rawArgs.includes("--update-bin")) {
+    program.parseOptions(rawArgs);
+    const handled = await handleGlobalFlags();
+    if (handled) return;
+  }
   if (rawArgs.length === 0 && process.stdin.isTTY && process.stdout.isTTY) {
     const { interactiveMenu } = await import("./menu.js");
     const argv = await interactiveMenu();

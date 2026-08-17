@@ -96,7 +96,12 @@ function simpleDiff(before: string, after: string): string {
 export async function policySync(
   config: ResolvedConfig,
   file: string,
-  options: { dryRun: boolean; yes: boolean; credentialEnvName?: string },
+  options: {
+    dryRun: boolean;
+    yes: boolean;
+    credentialEnvName?: string;
+    backupDir?: string;
+  },
 ): Promise<PolicySyncResult> {
   if (!existsSync(file)) throw new Error(`POLICY_FILE_NOT_FOUND: ${file}`);
   const desired = await readFile(file, "utf8");
@@ -137,7 +142,18 @@ export async function policySync(
       "POLICY_CONFIRMATION_REQUIRED: use --yes in CI or confirm in a TTY",
     );
 
-  const backup = `${file}.bak`;
+  const backupDir = options.backupDir;
+  const backup = backupDir
+    ? `${backupDir}/${file.split("/").pop()}.bak`
+    : `${file}.bak`;
+  if (backupDir) {
+    const { mkdirSync } = await import("node:fs");
+    try {
+      mkdirSync(backupDir, { recursive: true });
+    } catch {
+      // best-effort
+    }
+  }
   await writeFile(backup, current.content, "utf8");
   await api.updatePolicy(desired, current.etag);
   const verified = await api.getPolicy();
@@ -197,10 +213,20 @@ async function syncPolicyHuJson(
   merged: string,
   etag: string | undefined,
   labels: string[],
+  backupDir?: string,
 ): Promise<{ backup?: string }> {
   await api.validatePolicyText(merged);
   if (merged === currentRaw) return {};
-  const backup = `policy.provision-${Date.now()}.bak`;
+  const backupName = `policy.provision-${Date.now()}.bak`;
+  const backup = backupDir ? `${backupDir}/${backupName}` : backupName;
+  if (backupDir) {
+    const { mkdirSync } = await import("node:fs");
+    try {
+      mkdirSync(backupDir, { recursive: true });
+    } catch {
+      // best-effort
+    }
+  }
   await writeFile(backup, currentRaw, "utf8");
   await api.updatePolicy(merged, etag);
   const verified = await api.getPolicy();
@@ -214,7 +240,12 @@ async function syncPolicyHuJson(
 export async function ensureDeployTags(
   config: ResolvedConfig,
   tags: string[],
-  options: { yes: boolean; credentialEnvName?: string; owner?: string[] },
+  options: {
+    yes: boolean;
+    credentialEnvName?: string;
+    owner?: string[];
+    backupDir?: string;
+  },
 ): Promise<ProvisionResult> {
   const normalized = tags.map(normalizeTag).filter(Boolean);
   if (!normalized.length) return { provisioned: false, warnings: [] };
@@ -259,6 +290,7 @@ export async function ensureDeployTags(
     merged,
     raw.etag,
     missing,
+    options.backupDir,
   );
   const warnings = [
     `PROVISIONED_TAGS: added tagOwners for ${missing.join(", ")} (${owner.join(", ")}) via HuJSON-preserving write`,
@@ -271,7 +303,11 @@ export async function ensureDeployTags(
 export async function ensureFunnelAccess(
   config: ResolvedConfig,
   tags: string[],
-  options: { yes: boolean; credentialEnvName?: string },
+  options: {
+    yes: boolean;
+    credentialEnvName?: string;
+    backupDir?: string;
+  },
 ): Promise<ProvisionResult> {
   const api = new TailscaleApiClient(
     config,
@@ -312,6 +348,7 @@ export async function ensureFunnelAccess(
     merged,
     raw.etag,
     needed,
+    options.backupDir,
   );
   const warnings = [
     `PROVISIONED_FUNNEL: added funnel node attribute for ${needed.join(", ")} via HuJSON-preserving write`,

@@ -22,6 +22,7 @@ export interface ResolvedConfig {
   acceptDns: boolean;
   acceptRoutes: boolean;
   cleanupAfter: number;
+  stateDir?: string;
   source: Record<string, string>;
   warnings: string[];
 }

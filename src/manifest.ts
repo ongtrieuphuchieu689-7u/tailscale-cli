@@ -142,6 +142,9 @@ export const manifest = {
         ["--enable-https"],
         ["--cleanup"],
         ["--bin <path>"],
+        ["--ssh | --no-ssh"],
+        ["--state-dir <path>"],
+        ["--backup-dir <path>"],
       ],
       consumes: {
         inputs: [
@@ -188,6 +191,9 @@ export const manifest = {
         ["--yes"],
         ["--apply-policy"],
         ["--cleanup"],
+        ["--ssh | --no-ssh"],
+        ["--state-dir <path>"],
+        ["--backup-dir <path>"],
       ],
       consumes: {
         inputs: ["same as deploy", "TS_NO_CLEANUP=1 disables auto-cleanup"],
@@ -221,6 +227,8 @@ export const manifest = {
         ["--apply-policy"],
         ["--enable-https"],
         ["--verify-timeout <sec>"],
+        ["--ssh | --no-ssh"],
+        ["--state-dir <path>"],
       ],
       consumes: {
         inputs: [
@@ -290,6 +298,7 @@ export const manifest = {
         ["--dry-run"],
         ["--sync"],
         ["--yes"],
+        ["--backup-dir <path>"],
       ],
       consumes: { inputs: ["TS_POLICY_FILE or --file path"] },
       outputs: {
@@ -338,7 +347,7 @@ export const manifest = {
     {
       name: "update-bin",
       summary:
-        "Download the latest stable Tailscale build into the package cache (never overwrites package-managed binaries) or fall back to the native updater on Windows.",
+        "Download the latest stable Tailscale build into the package cache (never overwrites package-managed binaries) or fall back to the native updater on Windows. Also reachable as the global flag --update-bin (e.g. `tailsacle-cli --update-bin`).",
       command: [
         "update-bin",
         ["--force"],
@@ -350,6 +359,7 @@ export const manifest = {
       consumes: {
         inputs: [
           "TS_BIN_DIR cache override",
+          "TS_BIN_VERSION optional pinned version",
           "network access to pkgs.tailscale.com",
         ],
       },

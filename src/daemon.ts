@@ -89,7 +89,9 @@ async function resolveDaemonBin(): Promise<string> {
   return (await cachedDaemonPath()) ?? "tailscaled";
 }
 
-async function startUserspaceDaemon(): Promise<{
+async function startUserspaceDaemon(
+  stateDir?: string,
+): Promise<{
   started: boolean;
   command: string;
 }> {
@@ -102,9 +104,11 @@ async function startUserspaceDaemon(): Promise<{
       : join(cacheBinDir(), "run", "tailscaled.sock"));
   const state =
     process.env.TS_TAILSCALED_STATE?.trim() ||
-    (root
-      ? "/var/lib/tailscale/tailscaled.state"
-      : join(cacheBinDir(), "tailscaled.state"));
+    (stateDir
+      ? join(stateDir, "tailscaled.state")
+      : root
+        ? "/var/lib/tailscale/tailscaled.state"
+        : join(cacheBinDir(), "tailscaled.state"));
   const args = [
     "--tun=userspace-networking",
     `--state=${state}`,
@@ -153,7 +157,9 @@ export async function trackedUserspaceSocket(): Promise<string | undefined> {
   return tracked.socket;
 }
 
-export async function ensureDaemon(): Promise<DaemonState> {
+export async function ensureDaemon(options?: {
+  stateDir?: string;
+}): Promise<DaemonState> {
   const inspected = await inspectDaemon();
   if (inspected.running) {
     if (!process.env.TS_TAILSCALE_SOCKET) {
@@ -170,7 +176,7 @@ export async function ensureDaemon(): Promise<DaemonState> {
     return { running: true, warnings: [], actions };
   }
 
-  const userspace = await startUserspaceDaemon();
+  const userspace = await startUserspaceDaemon(options?.stateDir);
   if (userspace.started) {
     return {
       running: true,
