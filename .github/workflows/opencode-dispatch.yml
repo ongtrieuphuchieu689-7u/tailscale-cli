@@ -8,10 +8,18 @@ on:
         required: true
         type: string
       model:
-        description: "Model to use (provider/model)"
-        required: false
+        description: "Chọn model free"
+        required: true
+        type: choice
         default: "opencode/big-pickle"
-        type: string
+        options:
+          - opencode/big-pickle
+          - opencode/deepseek-v4-flash-free
+          - opencode/mimo-v2.5-free
+          - opencode/hy3-free
+          - opencode/laguna-s-2.1-free
+          - opencode/nemotron-3-ultra-free
+          - opencode/nemotron-3.5-lightning-free
       branch:
         description: "Branch to run on"
         required: false
@@ -31,7 +39,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ inputs.branch }}
-          persist-credentials: false
+          fetch-depth: 1
 
       - name: Run OpenCode
         uses: anomalyco/opencode/github@latest

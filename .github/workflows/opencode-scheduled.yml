@@ -16,7 +16,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
-          persist-credentials: false
+          fetch-depth: 1
 
       - name: Run OpenCode
         uses: anomalyco/opencode/github@latest
@@ -27,5 +27,10 @@ jobs:
           model: opencode/big-pickle
           use_github_token: true
           prompt: |
-            Review the codebase for any TODO comments and create a summary.
-            If you find issues worth addressing, open an issue to track them.
+            Review the codebase for TODO comments and issues.
+            If you find problems worth fixing:
+            - Create a new branch named "fix/auto-{description}"
+            - Make the code changes
+            - Commit with descriptive message
+            - Open a pull request
+            If no issues found, just open an issue with a summary.

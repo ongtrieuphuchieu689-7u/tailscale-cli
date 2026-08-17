@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          persist-credentials: false
+          fetch-depth: 1
 
       - uses: anomalyco/opencode/github@latest
         env:
@@ -44,3 +44,4 @@ jobs:
             - Check for code quality issues
             - Look for potential bugs
             - Suggest improvements
+            - If you find issues, fix them and commit the changes to this branch
