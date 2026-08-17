@@ -254,7 +254,13 @@ program.action(
         requiredPrivileges,
         start,
       );
-      for (const url of result.urls) console.log(`OPencode URL: ${url}`);
+      const urlsOut = result.urls.length
+        ? result.urls.map((url) => `OPencode URL: ${url}`).join("\n")
+        : undefined;
+      // --json must keep stdout pure JSON; human-readable URLs go to stderr.
+      if (program.opts<{ json?: boolean }>().json) {
+        if (urlsOut) console.error(urlsOut);
+      } else if (urlsOut) console.log(urlsOut);
     } catch (error) {
       fail("opencode", error, start);
     }

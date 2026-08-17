@@ -70,11 +70,11 @@ npx tailscale-cli-opencode --yes --apply-policy --enable-https --json
 
 ## Examples
 
-- `examples/colab/opencode-funnel-colab.sh` — one-cell Google Colab script that
-  installs `opencode-ai` + `tailsacle-cli`, grants opencode full permissions
-  (the headless equivalent of `opencode --auto`), starts `opencode serve` and
-  publishes it on the public internet through a Tailscale Funnel, printing the
-  Funnel URL. It now exists as a first-class CLI flow: `tailscale-cli-opencode`.
+- `examples/colab/opencode-funnel-colab.sh` — one-cell Google Colab script:
+  installs Node.js 22+ and `tailsacle-cli`, then delegates everything to a
+  single `tailscale-cli-opencode --install --yes --apply-policy --enable-https`
+  run (resolve opencode, grant full permissions, serve, join the tailnet,
+  publish the Funnel, verify DNS + TLS) and prints the public Funnel URL.
 
 ## GitHub Packages mirror (fast CI installs)
 

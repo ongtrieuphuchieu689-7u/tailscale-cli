@@ -31,6 +31,7 @@ auto-detecting.
 `deploy` resolves the runtime profile, uses an existing `TS_AUTH_KEY` or creates an auth key through the Tailscale API (auto-detecting an OAuth trust credential in any `tskey-client-…` env var, or the one named by `--credential-env`), runs `tailscale up`, verifies a Running backend, and can configure Serve/Funnel exposures.
 
 - `--dry-run` inspects the resolved deployment plan without joining the tailnet.
+- `--expose <target>` repeatable: a local port/URL (`3000`, `localhost:8080`, `http://…`), or a public-port mapping `PUBLIC=LOCAL` with an optional `#path` (`443=8443`, `443=3000#/api`, `8443=3001`) for Funnel — `PUBLIC` must be 443/8443/10000 when `--funnel` is set.
 - `--apply-policy` allows HuJSON-preserving `tagOwners`/`nodeAttrs` provisioning (never with plain `--yes` alone).
 - `--enable-https` allows enabling tailnet-wide HTTPS for Funnel exposures (HTTPS is never enabled implicitly).
 - `--key-expiry <value>` overrides the auth-key lifetime for this run (`max`/`unlimited` map to the documented 90-day ceiling; seconds are passed through verbatim, clamped with a `KEY_EXPIRY_CLAMPED` warning when above the ceiling).

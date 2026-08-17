@@ -66,14 +66,21 @@ function normalizeTag(tag: string): string {
 }
 
 export function parseExposure(value: string): Exposure {
-  const [first, rawPath] = value.trim().split("#", 2);
-  const rawTarget = first ?? "";
+  const eq = value.trim().split("=", 2);
+  const [publicPartRaw, rawPath] = (eq[0] ?? "").split("#", 2);
+  const publicPart = publicPartRaw ?? "";
   const path = rawPath
     ? rawPath.startsWith("/")
       ? rawPath
       : `/${rawPath}`
     : undefined;
-  const normalized = rawTarget.trim();
+  let publicPort: number | undefined;
+  if (/^\d+$/.test(publicPart.trim())) {
+    publicPort = Number(publicPart.trim());
+    if (!Number.isInteger(publicPort) || publicPort < 1 || publicPort > 65535)
+      throw new Error(`EXPOSE_INVALID_PUBLIC_PORT: ${publicPart.trim()}`);
+  }
+  const normalized = (eq.length === 2 ? (eq[1] ?? "") : publicPart).trim();
   let target: string;
 
   if (/^\d+$/.test(normalized)) target = `http://127.0.0.1:${normalized}`;
@@ -81,14 +88,18 @@ export function parseExposure(value: string): Exposure {
     target = normalized;
   else if (/^(?:localhost|127\.0\.0\.1)(?::\d+)?$/.test(normalized))
     target = `http://${normalized}`;
-  else throw new Error(`EXPOSE_INVALID_TARGET: ${normalized}`);
+  else throw new Error(`EXPOSE_INVALID_TARGET: ${value.trim()}`);
 
   const portMatch = target.match(/:(\d+)(?:\/|$)/);
   return {
     target,
     public: false,
     ...(path ? { path } : {}),
-    ...(portMatch ? { https: Number(portMatch[1]) } : {}),
+    ...(publicPort !== undefined
+      ? { https: publicPort }
+      : portMatch
+        ? { https: Number(portMatch[1]) }
+        : {}),
   };
 }
 

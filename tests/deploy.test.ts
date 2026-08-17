@@ -241,6 +241,27 @@ describe("exposure parsing", () => {
     });
   });
 
+  it("maps a public port to a different local target", () => {
+    expect(parseExposure("443=8443")).toEqual({
+      target: "http://127.0.0.1:8443",
+      public: false,
+      https: 443,
+    });
+    expect(parseExposure("8443#/api=3001")).toEqual({
+      target: "http://127.0.0.1:3001",
+      public: false,
+      path: "/api",
+      https: 8443,
+    });
+  });
+
+  it("rejects invalid public ports", () => {
+    expect(() => parseExposure("0=8443")).toThrow("EXPOSE_INVALID_PUBLIC_PORT");
+    expect(() => parseExposure("70000=8443")).toThrow(
+      "EXPOSE_INVALID_PUBLIC_PORT",
+    );
+  });
+
   it("rejects unsupported targets", () => {
     expect(() => parseExposure("ftp://example.com")).toThrow(
       "EXPOSE_INVALID_TARGET",

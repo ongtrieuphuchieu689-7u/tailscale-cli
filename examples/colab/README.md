@@ -1,7 +1,8 @@
 # Google Colab: opencode serve qua Tailscale Funnel
 
 Chạy **opencode serve** ngay trong Google Colab và truy cập từ bất kỳ đâu trên
-internet qua một Funnel URL công khai — dùng `tailsacle-cli` (zero-config) để
+internet qua một Funnel URL công khai — dùng bin `tailscale-cli-opencode`
+(zero-config, có sẵn trong gói `tailsacle-cli`) để resolve/install opencode,
 join tailnet, auto-provision (tagOwners / funnel node attribute / tailnet HTTPS)
 và verify DNS + TLS trước khi báo thành công.
 
@@ -34,6 +35,12 @@ và verify DNS + TLS trước khi báo thành công.
 
 5. Dán toàn bộ nội dung `opencode-funnel-colab.sh` vào **một cell** và chạy.
 
+Script chỉ là wrapper mỏng: cài Node 22+ và `tailsacle-cli`, rồi giao toàn bộ
+việc còn lại cho **một lệnh** `tailscale-cli-opencode --port … --install --yes
+--apply-policy --enable-https --json` — opencode được resolve qua npx, permission
+config được ghi, serve chạy nền, Funnel publish ở public port 443, và DNS + TLS
+được verify trước khi in URL.
+
 Script in ra Funnel URL dạng:
 
 ```
@@ -60,27 +67,27 @@ API HTTP của opencode serve (xem https://opencode.ai/docs/server) để gọi 
 
 `"permission": "allow"` auto-approve **mọi** tool (`bash`, `edit`, `read`,
 `glob`, `grep`, `webfetch`, …) — không prompt, không chặn gì, đúng như `--auto`.
-Script ghi cấu hình này vào cả `~/.config/opencode/opencode.json` (global) lẫn
-`opencode.json` (project) và set thêm env `OPENCODE_PERMISSION='{"*":"allow"}'`
-như lớp fallback, nên `opencode serve` chạy nền không bao giờ bị treo vì chờ
-phê duyệt.
+`tailscale-cli-opencode` ghi cấu hình này vào cả `~/.config/opencode/opencode.json`
+(global) lẫn `opencode.json` (project) và set thêm env
+`OPENCODE_PERMISSION='{"*":"allow"}'` như lớp fallback, nên `opencode serve`
+chạy nền không bao giờ bị treo vì chờ phê duyệt. Dùng `--opencode-config <path>`
+nếu muốn chỉ định file khác.
 
 Lưu ý: `deny` rules (nếu có trong các config khác, ví dụ agent/subagent) vẫn
 được tôn trọng — giống `--auto`.
 
 ## Biến môi trường tùy chọn
 
-| Biến | Mặc định | Ý nghĩa |
-|---|---|---|
-| `OPCODE_PORT` | `3000` | Cổng local mà `opencode serve` lắng nghe |
-| `TS_HOSTNAME` | `colab-opencode` | Hostname của node; URL = `https://<TS_HOSTNAME>.<tailnet>.ts.net/` |
-| `TS_TAILNET` | (mặc định của credential) | Tailnet, ví dụ `mycorp.ts.net` |
-| `TS_PROFILE` | `funnel-app` | Profile; `funnel-app` là non-ephemeral (node ephemeral không publish Funnel DNS) |
-| `OPENCODE_SERVER_PASSWORD` | (trống) | Basic auth cho URL công khai — **nên đặt** vì Funnel URL là public |
+| Biến                       | Mặc định                  | Ý nghĩa                                                                          |
+| -------------------------- | ------------------------- | -------------------------------------------------------------------------------- |
+| `OPCODE_PORT`              | `3000`                    | Cổng local mà `opencode serve` lắng nghe                                         |
+| `TS_HOSTNAME`              | `colab-opencode`          | Hostname của node; URL = `https://<TS_HOSTNAME>.<tailnet>.ts.net/`               |
+| `TS_TAILNET`               | (mặc định của credential) | Tailnet, ví dụ `mycorp.ts.net`                                                   |
+| `TS_PROFILE`               | `funnel-app`              | Profile; `funnel-app` là non-ephemeral (node ephemeral không publish Funnel DNS) |
+| `OPENCODE_SERVER_PASSWORD` | (trống)                   | Basic auth cho URL công khai — **nên đặt** vì Funnel URL là public               |
 
-Nếu đặt `OPENCODE_SERVER_PASSWORD`, script hiện chưa tự inject — export nó trước
-khi chạy cell, hoặc tự thêm `OPENCODE_SERVER_PASSWORD=...` vào lệnh `opencode
-serve`.
+Nếu đặt `OPENCODE_SERVER_PASSWORD`, export nó trước khi chạy cell — env này được
+thừa hưởng bởi tiến trình `opencode serve` do CLI khởi động.
 
 ## Lần đầu đăng nhập model
 
@@ -96,16 +103,15 @@ opencode auth login
 ## Xác minh / dừng
 
 ```bash
-tailsacle-cli daemon status     # trạng thái tailscaled userspace
-tailsacle-cli daemon stop       # dừng tailscaled userspace do CLI khởi động
-kill $(pgrep -f "opencode serve")   # dừng opencode serve
+tailscale-cli-opencode --stop    # dừng opencode serve + tailscaled userspace
+tailsacle-cli daemon status      # trạng thái tailscaled userspace
 ```
 
 ## Gỡ lỗi
 
-- `tail -f /tmp/opencode-serve.log` — log của `opencode serve`.
-- Script in ra full JSON envelope khi deploy; nếu có warning/error, đọc mã lỗi
-  (`FUNNEL_*`, `PROVISIONED_*`, …) trong envelope.
+- `tail -f ~/.cache/tailsacle-cli/bin/opencode-serve.log` — log của
+  `opencode serve`.
+- Chạy lại lệnh CLI trực tiếp với `--json` để xem full JSON envelope; nếu có
+  warning/error, đọc mã lỗi (`FUNNEL_*`, `OPENCODE_*`, `PROVISIONED_*`, …).
 - Nếu Funnel URL trả về chứng chỉ chưa sẵn sàng, chờ 1–2 phút rồi tải lại
-  (Tailscale cấp cert tự động; `deploy --funnel` đã verify DNS + TLS trước khi
-  in URL).
+  (Tailscale cấp cert tự động; CLI đã verify DNS + TLS trước khi in URL).
