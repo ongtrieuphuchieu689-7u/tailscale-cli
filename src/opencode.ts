@@ -218,19 +218,27 @@ export async function serveHttpUp(
   return false;
 }
 
+export function openCodeServeArgs(
+  runner: OpenCodeRunner,
+  port: number,
+): string[] {
+  return [
+    ...runner.command.slice(1),
+    "serve",
+    "--port",
+    String(port),
+    "--hostname",
+    "127.0.0.1",
+  ];
+}
+
 export async function startOpenCodeServe(options: {
   runner: OpenCodeRunner;
   port: number;
   configPath?: string;
   logPath: string;
 }): Promise<{ pid: number; command: string }> {
-  const args = [
-    "serve",
-    "--port",
-    String(options.port),
-    "--hostname",
-    "127.0.0.1",
-  ];
+  const args = openCodeServeArgs(options.runner, options.port);
   const command = [...options.runner.command, ...args];
   const logDir = dirname(options.logPath);
   mkdirSync(logDir, { recursive: true });

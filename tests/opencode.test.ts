@@ -13,6 +13,7 @@ import {
   DEFAULT_OPENCODE_PORT,
   OPENCODE_PERMISSION_CONFIG,
   deriveUrls,
+  openCodeServeArgs,
   readOpenCodeServeRecord,
   resolveOpenCodeRunner,
   tryVersion,
@@ -262,5 +263,37 @@ describe("tryVersion", () => {
       vi.unstubAllEnvs();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("openCodeServeArgs", () => {
+  it("keeps the npx runner prefix before the serve args", () => {
+    expect(
+      openCodeServeArgs(
+        {
+          kind: "npx",
+          command: ["npx", "-y", "opencode-ai"],
+          installedBy: "npx-resolved",
+        },
+        8443,
+      ),
+    ).toEqual([
+      "-y",
+      "opencode-ai",
+      "serve",
+      "--port",
+      "8443",
+      "--hostname",
+      "127.0.0.1",
+    ]);
+  });
+
+  it("spawns a PATH binary directly", () => {
+    expect(
+      openCodeServeArgs(
+        { kind: "path", command: ["opencode"], installedBy: "found" },
+        DEFAULT_OPENCODE_PORT,
+      ),
+    ).toEqual(["serve", "--port", "3000", "--hostname", "127.0.0.1"]);
   });
 });
