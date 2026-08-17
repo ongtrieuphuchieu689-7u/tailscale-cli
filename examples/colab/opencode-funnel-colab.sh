@@ -36,12 +36,14 @@ TS_PROFILE="${TS_PROFILE:-funnel-app}"
 # OPENCODE_SERVER_PASSWORD="${OPENCODE_SERVER_PASSWORD:-}"
 
 # ------------------------------------------------------------- credentials ---
-# One of these must be set in the Colab "secrets"/env before running:
+# One of these must be set in the Colab "secrets"/env before running
+# (same credential set the CLI resolves, in precedence order):
 #   TS_AUTH_KEY="tskey-auth-..."
-#   TS_OAUTH_CLIENT_ID=...  +  TS_OAUTH_CLIENT_SECRET=...
-#   TS_API_KEY=...          (OAuth trust credentials are preferred)
-if [[ -z "${TS_AUTH_KEY:-}" && -z "${TS_OAUTH_CLIENT_SECRET:-}" && -z "${TS_API_KEY:-}" ]]; then
-  echo "ERROR: set one of TS_AUTH_KEY, TS_OAUTH_CLIENT_SECRET, or TS_API_KEY (see examples/colab/README.md)" >&2
+#   TS_CLIENT_SECRET="tskey-client-..."  (OAuth trust credential; standalone)
+#   TS_OAUTH_CLIENT_ID + TS_OAUTH_CLIENT_SECRET
+#   TS_ACCESS_TOKEN / TS_API_KEY
+if [[ -z "${TS_AUTH_KEY:-}" && -z "${TS_CLIENT_SECRET:-}" && -z "${TS_OAUTH_CLIENT_SECRET:-}" && -z "${TS_ACCESS_TOKEN:-}" && -z "${TS_API_KEY:-}" ]]; then
+  echo "ERROR: set one of TS_AUTH_KEY, TS_CLIENT_SECRET, TS_OAUTH_CLIENT_SECRET, TS_ACCESS_TOKEN, or TS_API_KEY (see examples/colab/README.md)" >&2
   exit 1
 fi
 
