@@ -11,13 +11,28 @@ và verify DNS + TLS trước khi báo thành công.
 2. Tạo credentials trên [login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys)
    (OAuth trust credential `tskey-client-…` được khuyến nghị) hoặc một node auth
    key `tskey-auth-…`.
-3. Đặt credential vào secrets của Colab (biểu tượng 🔑 bên trái) hoặc export ở
-   đầu cell:
+3. Lưu credential vào **Secrets của Colab** (icon 🔑 bên trái, giống GitHub
+   Secrets — private, không bị lộ khi share notebook):
    - `TS_OAUTH_CLIENT_ID` + `TS_OAUTH_CLIENT_SECRET` (OAuth trust credential —
      dùng một mình `TS_CLIENT_SECRET` cũng được), **hoặc**
    - `TS_AUTH_KEY`, **hoặc**
    - `TS_API_KEY`
-4. Dán toàn bộ nội dung `opencode-funnel-colab.sh` vào **một cell** và chạy.
+4. Dán cell Python này (load secrets thành env, giống như GitHub Actions inject
+   env từ secrets) rồi chạy **trước** cell bash:
+
+   ```python
+   from google.colab import userdata
+   import os
+
+   for name in ("TS_AUTH_KEY", "TS_OAUTH_CLIENT_ID",
+                "TS_OAUTH_CLIENT_SECRET", "TS_API_KEY", "TS_TAILNET"):
+       try:
+           os.environ[name] = userdata.get(name)
+       except Exception:
+           pass  # secret chưa đặt thì bỏ qua
+   ```
+
+5. Dán toàn bộ nội dung `opencode-funnel-colab.sh` vào **một cell** và chạy.
 
 Script in ra Funnel URL dạng:
 
