@@ -16,6 +16,17 @@ colab.research.google.com/github/ongtrieuphuchieu689-7u/tailscale-cli/blob/main/
 secrets bằng `userdata.get()` và chạy script funnel luôn. Cũng có thể dán nội
 dung [`colab-cell.py`](colab-cell.py) vào một cell trống của notebook bất kỳ.
 
+**Cách 3 (ngắn nhất — một lệnh duy nhất):** nếu notebook là riêng tư (không
+share), chỉ cần một cell `%%bash` chứa một dòng — dán thẳng credential vào
+lệnh, mọi thứ khác (cài CLI, opencode, config, serve, funnel, verify) tự động:
+
+```bash
+%%bash
+TS_CLIENT_SECRET="tskey-client-…" npx -y -p tailsacle-cli tailscale-cli-opencode --install --yes --apply-policy --enable-https --json
+```
+
+(Thay `TS_CLIENT_SECRET` bằng `TS_AUTH_KEY`/`TS_OAUTH_CLIENT_SECRET`/`TS_ACCESS_TOKEN`/`TS_API_KEY` nếu dùng credential đó.) Nhược điểm: secret hiển thị trong notebook — không dùng khi share notebook; Cách 1 (🔑 Secrets) an toàn hơn.
+
 **Cách 2 (hai cell):** như dưới đây.
 
 1. Mở một notebook Google Colab (Server/GPU/TPU runtime đều được).
