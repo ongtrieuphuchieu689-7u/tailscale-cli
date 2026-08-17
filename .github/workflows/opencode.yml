@@ -30,7 +30,9 @@ jobs:
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCLI_TOKEN_OWNER: ${{ secrets.GHCLI_TOKEN_OWNER }}
         with:
           model: opencode/big-pickle
+          token: ${{ secrets.GHCLI_TOKEN_OWNER }}
           use_github_token: true
           share: true
