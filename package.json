@@ -48,7 +48,8 @@
     "pack:check": "npm run build && npm run check:secrets && npm pack --dry-run",
     "version:bump": "node scripts/bump-version.mjs",
     "version:bump:verify": "node scripts/bump-version.mjs --verify",
-    "deploy:secret-ongtrieuphuchieu689-7u": "ghcli .env.ongtrieuphuchieu689-7u"
+    "deploy:secret-ongtrieuphuchieu689-7u": "ghcli .env.ongtrieuphuchieu689-7u",
+    "deploy:secret-othauip8plus-dn": "ghcli .env.othauip8plus-dn"
   },
   "dependencies": {
     "@inquirer/prompts": "^8.5.2",
