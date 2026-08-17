@@ -8,6 +8,16 @@ và verify DNS + TLS trước khi báo thành công.
 
 ## Cách dùng
 
+**Cách 1 (khuyến nghị — một cell):** mở notebook có sẵn
+[`opencode-funnel-colab.ipynb`](opencode-funnel-colab.ipynb) trong Colab
+(File → Upload notebook, hoặc
+colab.research.google.com/github/ongtrieuphuchieu689-7u/tailscale-cli/blob/main/examples/colab/opencode-funnel-colab.ipynb),
+đặt credential vào 🔑 Secrets, rồi chỉ cần chạy cell code duy nhất — nó tự đọc
+secrets bằng `userdata.get()` và chạy script funnel luôn. Cũng có thể dán nội
+dung [`colab-cell.py`](colab-cell.py) vào một cell trống của notebook bất kỳ.
+
+**Cách 2 (hai cell):** như dưới đây.
+
 1. Mở một notebook Google Colab (Server/GPU/TPU runtime đều được).
 2. Tạo credentials trên [login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys)
    (OAuth trust credential `tskey-client-…` được khuyến nghị) hoặc một node auth
