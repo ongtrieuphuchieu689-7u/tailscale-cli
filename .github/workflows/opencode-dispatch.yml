@@ -45,8 +45,7 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCLI_TOKEN_OWNER: ${{ secrets.GHCLI_TOKEN_OWNER }}
+          GITHUB_TOKEN: ${{ secrets.GHCLI_TOKEN_OWNER }}
         with:
           model: ${{ inputs.model }}
           use_github_token: true
