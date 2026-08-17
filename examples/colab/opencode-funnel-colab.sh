@@ -1,6 +1,13 @@
+%%bash
 #!/usr/bin/env bash
 # Google Colab — expose `opencode serve` on the public internet through a
 # Tailscale Funnel, powered by the `tailscale-cli-opencode` CLI (zero-config).
+#
+# COLAB FORMAT: the first line `%%bash` is the Colab cell magic — paste this
+# whole file into an EMPTY cell and it runs as bash (Colab cells default to
+# Python). When executed directly in a Colab/VM terminal the `%%bash` line is
+# an unknown command that fails harmlessly (set -e is not active yet), so the
+# script still works: `chmod +x opencode-funnel-colab.sh && ./opencode-funnel-colab.sh`.
 #
 # What this cell does:
 #   1. installs Node.js 22+ (Colab ships without a usable Node by default)

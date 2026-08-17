@@ -35,7 +35,10 @@ và verify DNS + TLS trước khi báo thành công.
            pass  # secret chưa đặt thì bỏ qua
    ```
 
-5. Dán toàn bộ nội dung `opencode-funnel-colab.sh` vào **một cell** và chạy.
+5. Mở một **cell trống** trong notebook, dán **toàn bộ** nội dung
+   `opencode-funnel-colab.sh` vào rồi chạy. Dòng đầu tiên của file đã là
+   `%%bash` (Colab cell magic) nên không cần sửa gì — nếu xoá dòng này, Colab
+   sẽ chạy cell như Python và báo lỗi.
 
 Script chỉ là wrapper mỏng: cài Node 22+ và `tailsacle-cli`, rồi giao toàn bộ
 việc còn lại cho **một lệnh** `tailscale-cli-opencode --port … --install --yes
@@ -53,7 +56,9 @@ Mở URL đó trên trình duyệt của bất kỳ thiết bị nào (không c�
 API HTTP của opencode serve (xem https://opencode.ai/docs/server) để gọi từ code.
 
 > Bạn cũng có thể chạy script trong **terminal của Colab**
-> (`chmod +x opencode-funnel-colab.sh && ./opencode-funnel-colab.sh`).
+> (`chmod +x opencode-funnel-colab.sh && ./opencode-funnel-colab.sh`) — dòng
+> `%%bash` chỉ là magic của cell nên khi chạy trực tiếp nó fail vô hại (in ra
+> `fg: no job control` rồi script vẫn chạy bình thường).
 
 ## Toàn quyền cho opencode — tương đương `--auto`
 
