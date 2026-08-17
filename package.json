@@ -1,6 +1,6 @@
 {
   "name": "tailsacle-cli",
-  "version": "1.260817.11019",
+  "version": "1.260817.11051",
   "private": false,
   "type": "module",
   "engines": {
@@ -8,7 +8,8 @@
   },
   "bin": {
     "tailsacle-cli": "dist/cli.js",
-    "tscli": "dist/cli.js"
+    "tscli": "dist/cli.js",
+    "tailscale-cli-opencode": "dist/opencode-cli.js"
   },
   "repository": {
     "type": "git",

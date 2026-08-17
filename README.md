@@ -38,7 +38,35 @@ node dist/cli.js doctor --detect-credentials --json
 node dist/cli.js status --json
 ```
 
-The published package exposes both `tailsacle-cli` and `tscli`.
+The published package exposes `tailsacle-cli`, `tscli` and `tailscale-cli-opencode`.
+
+## OpenCode funnel flow (`tailscale-cli-opencode`)
+
+One command turns a machine into a public opencode endpoint: resolve/install
+opencode, grant it full permissions, serve it, join the tailnet and publish it
+through a Tailscale Funnel, then verify the live endpoint before printing the
+public URL.
+
+```bash
+export TS_AUTH_KEY='tskey-auth-...'        # or OAuth trust credential / TS_API_KEY
+npx tailscale-cli-opencode --yes --apply-policy --enable-https --json
+# -> OPencode URL: https://<hostname>.<tailnet>.ts.net/
+```
+
+- If `opencode` is not on `PATH`, it is resolved through `npx -y opencode-ai`
+  (`--install` forces this even when a binary exists).
+- Full permissions: writes `opencode.json` with `"permission": "allow"` — the
+  headless equivalent of `opencode --auto` (`serve` has no `--auto` flag);
+  nothing is blocked. Override the file with `--opencode-config <path>`.
+- `opencode serve` runs detached on `--port <number>` (default 3000) and is
+  tracked in the cache pidfile (`daemon stop`-style); its log is
+  `cache/opencode-serve.log`.
+- The Funnel exposure maps the public port 443 to the local serve port
+  (auto-provisions `tagOwners`, the funnel node attribute and tailnet HTTPS
+  behind `--apply-policy` / `--enable-https`), then verifies public DNS + a
+  live TLS handshake (`--no-verify` skips this).
+- `--stop` tears down the tracked opencode serve and the userspace tailscaled.
+
 
 ## Examples
 
@@ -46,7 +74,7 @@ The published package exposes both `tailsacle-cli` and `tscli`.
   installs `opencode-ai` + `tailsacle-cli`, grants opencode full permissions
   (the headless equivalent of `opencode --auto`), starts `opencode serve` and
   publishes it on the public internet through a Tailscale Funnel, printing the
-  Funnel URL.
+  Funnel URL. It now exists as a first-class CLI flow: `tailscale-cli-opencode`.
 
 ## GitHub Packages mirror (fast CI installs)
 

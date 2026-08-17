@@ -7,7 +7,7 @@
 export const manifest = {
   manifestVersion: 2,
   name: "tailsacle-cli",
-  bins: ["tailsacle-cli", "tscli"],
+  bins: ["tailsacle-cli", "tscli", "tailscale-cli-opencode"],
   envelope: {
     fields: [
       "ok",
@@ -393,6 +393,55 @@ export const manifest = {
       sideEffects: ["stop tracked userspace tailscaled (stop action)"],
       retryable: false,
       confirmation: "never",
+    },
+    {
+      name: "opencode",
+      summary:
+        "Separate bin tailscale-cli-opencode: resolve/install opencode (npx -y opencode-ai when missing), grant headless full permissions (permission: allow, the --auto equivalent), start opencode serve in the background, join the tailnet and publish it through a Tailscale Funnel, then verify public DNS + live TLS before printing the public URL. --stop tears the tracked serve and userspace tailscaled down.",
+      command: [
+        "opencode",
+        ["--port <number>"],
+        ["--opencode-config <path>"],
+        ["--install"],
+        ["--no-verify"],
+        ["--verify-timeout <seconds>"],
+        ["--dry-run"],
+        ["--stop"],
+        ["--yes"],
+        ["--apply-policy"],
+        ["--enable-https"],
+        ["--state-dir <path>"],
+        ["--backup-dir <path>"],
+        ["--tag-owner <owner...>"],
+        ["--credential-env <name>"],
+        ["--profile <profile>"],
+        ["--config <path>"],
+        ["--json"],
+      ],
+      consumes: {
+        inputs: [
+          "env.TS_AUTH_KEY / OAuth trust credential / TS_API_KEY (for join + funnel provisioning)",
+          "npx (Node.js 22+) for opencode-ai resolution",
+          "network access to npmjs + Tailscale control plane",
+        ],
+      },
+      outputs: {
+        json: "resolved { opencode { runner, pid, command, port, configPath, permissionConfig, permissionWritten, permissionExisting, logPath }, deployment, dnsName?, urls[], verified, verifyAttempts? }",
+      },
+      scopes: ["none (local opencode + tailscale funnel)"],
+      privileges: [
+        "write ~/.config/opencode and ./opencode.json",
+        "npm/npx access for opencode-ai",
+        "tailscaled running (userspace auto-started)",
+      ],
+      sideEffects: [
+        "install/resolve opencode-ai via npx (when missing or --install)",
+        "start opencode serve (background, tracked in the cache pidfile)",
+        "join tailnet and configure Funnel (auto-provision with --apply-policy/--enable-https)",
+        "verify public DNS + live TLS endpoint",
+      ],
+      retryable: false,
+      confirmation: "--yes or TTY",
     },
   ],
   policy_writes: {
