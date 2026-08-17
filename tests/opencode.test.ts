@@ -87,7 +87,11 @@ function writeRunnerShim(
     "bin",
     process.platform === "win32" ? `${name}.cmd` : name,
   );
-  writeFileSync(file, process.platform === "win32" ? winBody : posixBody, "utf8");
+  writeFileSync(
+    file,
+    process.platform === "win32" ? winBody : posixBody,
+    "utf8",
+  );
   if (process.platform !== "win32") chmodSync(file, 0o755);
 }
 
@@ -140,8 +144,8 @@ describe("opencode runner resolution", () => {
       writeRunnerShim(
         dir,
         "npx",
-        "#!/bin/sh\nif [ \"$1\" = \"-y\" ]; then echo 'opencode v2.0.0'; fi\n",
-        "@echo off\r\nif \"%~1\"==\"-y\" echo opencode v2.0.0\r\n",
+        '#!/bin/sh\nif [ "$1" = "-y" ]; then echo \'opencode v2.0.0\'; fi\n',
+        '@echo off\r\nif "%~1"=="-y" echo opencode v2.0.0\r\n',
       );
       vi.stubEnv("PATH", join(dir, "bin"));
       const runner = await resolveOpenCodeRunner({ install: true });
