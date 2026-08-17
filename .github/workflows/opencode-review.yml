@@ -3,6 +3,21 @@ name: opencode-review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Chọn model free"
+        required: true
+        type: choice
+        default: "opencode/big-pickle"
+        options:
+          - opencode/big-pickle
+          - opencode/deepseek-v4-flash-free
+          - opencode/mimo-v2.5-free
+          - opencode/hy3-free
+          - opencode/laguna-s-2.1-free
+          - opencode/nemotron-3-ultra-free
+          - opencode/nemotron-3.5-lightning-free
 
 jobs:
   review:
@@ -22,7 +37,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: opencode/big-pickle
+          model: ${{ inputs.model || 'opencode/big-pickle' }}
           use_github_token: true
           prompt: |
             Review this pull request:
