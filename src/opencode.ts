@@ -20,6 +20,14 @@ import type { Exposure, ResolvedConfig } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Windows npm shims (opencode.cmd, npx.cmd) can only be launched through a
+ * shell; execFile/spawn reject .cmd files without one.
+ */
+function shellForWin32(): { shell?: boolean } {
+  return process.platform === "win32" ? { shell: true } : {};
+}
+
 export const OPENCODE_PERMISSION_CONFIG = `{
   "$schema": "https://opencode.ai/config.json",
   "permission": "allow"
@@ -49,6 +57,7 @@ export async function tryVersion(
       {
         timeout: 60_000,
         windowsHide: true,
+        ...shellForWin32(),
       },
     );
     const text = `${stdout}\n${stderr}`.trim();
@@ -230,6 +239,7 @@ export async function startOpenCodeServe(options: {
     detached: true,
     stdio: ["ignore", logStream, logStream],
     windowsHide: true,
+    ...shellForWin32(),
     env: {
       ...process.env,
       OPENCODE_DISABLE_AUTOUPDATE: "1",
@@ -314,14 +324,27 @@ export async function stopOpenCodeServe(): Promise<{
         "ALREADY_STOPPED: tracked opencode serve is not running; cleared the pidfile",
     };
   }
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch (error) {
-    return {
-      stopped: false,
-      pid,
-      message: `KILL_FAILED: could not signal pid ${pid} (${error instanceof Error ? error.message : String(error)})`,
-    };
+  if (process.platform === "win32") {
+    // The tracked pid is the shell/cmd wrapper when the runner is a .cmd
+    // shim; taskkill /T kills the whole process tree (serve + wrapper).
+    try {
+      await execFileAsync("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        windowsHide: true,
+        timeout: 20_000,
+      });
+    } catch {
+      // fall through to the alive check below
+    }
+  } else {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch (error) {
+      return {
+        stopped: false,
+        pid,
+        message: `KILL_FAILED: could not signal pid ${pid} (${error instanceof Error ? error.message : String(error)})`,
+      };
+    }
   }
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await sleep(500);

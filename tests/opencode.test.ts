@@ -59,6 +59,7 @@ describe("opencode permission config (headless --auto equivalent)", () => {
     const previousCwd = process.cwd();
     try {
       vi.stubEnv("HOME", home);
+      if (process.platform === "win32") vi.stubEnv("USERPROFILE", home);
       vi.stubEnv("XDG_CACHE_HOME", join(dir, "cache"));
       process.chdir(dir);
       const result = writePermissionConfig();
@@ -74,14 +75,33 @@ describe("opencode permission config (headless --auto equivalent)", () => {
   });
 });
 
+/** Writes a PATH fixture: a .cmd shim on Windows, a sh script elsewhere. */
+function writeRunnerShim(
+  dir: string,
+  name: string,
+  posixBody: string,
+  winBody: string,
+): void {
+  const file = join(
+    dir,
+    "bin",
+    process.platform === "win32" ? `${name}.cmd` : name,
+  );
+  writeFileSync(file, process.platform === "win32" ? winBody : posixBody, "utf8");
+  if (process.platform !== "win32") chmodSync(file, 0o755);
+}
+
 describe("opencode runner resolution", () => {
   it("prefers an opencode binary on PATH", async () => {
     const dir = tempDir();
     try {
       mkdirSync(join(dir, "bin"), { recursive: true });
-      const bin = join(dir, "bin", "opencode");
-      writeFileSync(bin, "#!/bin/sh\necho 'opencode v9.9.9'\n", "utf8");
-      chmodSync(bin, 0o755);
+      writeRunnerShim(
+        dir,
+        "opencode",
+        "#!/bin/sh\necho 'opencode v9.9.9'\n",
+        "@echo off\r\necho opencode v9.9.9\r\n",
+      );
       vi.stubEnv("PATH", join(dir, "bin"));
       const runner = await resolveOpenCodeRunner();
       expect(runner.kind).toBe("path");
@@ -111,16 +131,18 @@ describe("opencode runner resolution", () => {
     const dir = tempDir();
     try {
       mkdirSync(join(dir, "bin"), { recursive: true });
-      const bin = join(dir, "bin", "opencode");
-      writeFileSync(bin, "#!/bin/sh\necho 'opencode v1.0.0'\n", "utf8");
-      chmodSync(bin, 0o755);
-      const npx = join(dir, "bin", "npx");
-      writeFileSync(
-        npx,
-        '#!/bin/sh\nif [ "$1" = "-y" ]; then echo \'opencode v2.0.0\'; fi\n',
-        "utf8",
+      writeRunnerShim(
+        dir,
+        "opencode",
+        "#!/bin/sh\necho 'opencode v1.0.0'\n",
+        "@echo off\r\necho opencode v1.0.0\r\n",
       );
-      chmodSync(npx, 0o755);
+      writeRunnerShim(
+        dir,
+        "npx",
+        "#!/bin/sh\nif [ \"$1\" = \"-y\" ]; then echo 'opencode v2.0.0'; fi\n",
+        "@echo off\r\nif \"%~1\"==\"-y\" echo opencode v2.0.0\r\n",
+      );
       vi.stubEnv("PATH", join(dir, "bin"));
       const runner = await resolveOpenCodeRunner({ install: true });
       expect(runner.kind).toBe("npx");
