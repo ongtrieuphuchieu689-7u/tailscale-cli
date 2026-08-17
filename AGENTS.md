@@ -19,11 +19,15 @@ npm run check       # typecheck + test  (must pass before commit)
 npm run build       # tsc -p tsconfig.build.json -> dist/
 npm run smoke       # build + run --help + agent-manifest
 npm run pack:check  # build + npm pack --dry-run
+npm run format:check  # prettier --check src/**/*.ts tests/**/*.ts (CI enforces this)
 npm run version:bump:verify   # bump version to now (VN time), check > published
 ```
 
-Run `npm run check` and `npm run build` before every commit. Keep output JSON-safe and
-mask secrets. Update `README.md`/`docs/` whenever flags, envelopes or defaults change.
+Run `npm run check`, `npm run build` and `npm run format:check` before every
+commit — CI fails the job if any of them fails (`format:check` runs first in the
+workflow). If `format:check` reports a file, run `npx prettier --write <file>`
+(never commit unformatted TS). Keep output JSON-safe and mask secrets. Update
+`README.md`/`docs/` whenever flags, envelopes or defaults change.
 
 ## Versioning — REQUIRED (read carefully)
 
