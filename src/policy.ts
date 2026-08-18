@@ -260,7 +260,7 @@ export async function ensureDeployTags(
   if (!missing.length) return { provisioned: false, warnings: [] };
 
   const owner = options.owner?.length
-    ? options.owner.map(normalizeTag)
+    ? options.owner
     : uniqueOwners(current.json);
   if (!owner.length)
     throw new Error(
