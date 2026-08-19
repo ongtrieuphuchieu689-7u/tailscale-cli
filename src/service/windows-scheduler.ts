@@ -1,3 +1,4 @@
+import { existsSync, readFileSync, watchFile } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { registryAdd, registryRemove, registryList } from "./registry.js";
 import { cliEntrypoint, nodeExecutable } from "./linux.js";
@@ -30,12 +31,21 @@ function schtasks(args: string[], tolerateFailure = false): string {
   return (result.stdout ?? "").trim();
 }
 
-function taskCommand(config: ServiceConfig): string {
+export function schedulerLogDir(name: string): string {
+  const home =
+    process.env.USERPROFILE ?? process.env.HOME ?? "C:\\Users\\Default";
+  return `${home}\\.tailsacle-cli\\logs\\${name}`;
+}
+
+function taskCommand(config: ServiceConfig, logDir: string): string {
   const execArgs = config.script
     ? [config.script, ...config.args]
     : [cliEntrypoint(), ...config.args];
   const inner = [nodeExecutable(), ...execArgs].join(" ");
-  return `cmd /c "cd /d ${config.workingDir} && ${inner}"`;
+  const outLog = `${logDir}\\out.log`;
+  const errLog = `${logDir}\\err.log`;
+  // mkdir ensures log dir exists before redirect; >> appends on each task run
+  return `cmd /c "if not exist "${logDir}" mkdir "${logDir}" && cd /d ${config.workingDir} && ${inner} >>"${outLog}" 2>>"${errLog}""`;
 }
 
 function taskExists(name: string): boolean {
@@ -55,12 +65,13 @@ export class WindowsSchedulerManager implements ServiceManager {
         `SERVICE_ALREADY_EXISTS: scheduled task "${taskPathFor(config.name)}" already exists`,
       );
     }
+    const logDir = config.log?.dir ?? schedulerLogDir(config.name);
     const args = [
       "/create",
       "/tn",
       taskPathFor(config.name),
       "/tr",
-      taskCommand(config),
+      taskCommand(config, logDir),
       "/sc",
       "onlogon",
       "/f",
@@ -72,6 +83,7 @@ export class WindowsSchedulerManager implements ServiceManager {
       platform: "win32",
       scope: "user",
       unitPath: taskPathFor(config.name),
+      logDir,
       installedAt: new Date().toISOString(),
     };
     await registryAdd(info);
@@ -141,43 +153,38 @@ export class WindowsSchedulerManager implements ServiceManager {
   }
 
   async logs(name: string, opts: LogOptions): Promise<void> {
-    const result = spawnSync(
-      "schtasks",
-      ["/query", "/tn", taskPathFor(name), "/fo", "LIST", "/v"],
-      { encoding: "utf8" },
-    );
-    if (result.status !== 0) {
-      throw new Error(
-        `SERVICE_NOT_FOUND: task "${taskPathFor(name)}" not found`,
-      );
-    }
-    const lines = (result.stdout ?? "").split("\n");
-    console.log(lines.slice(-Math.max(1, opts.lines)).join("\n"));
+    const info = registryList().find((e) => e.name === name);
+    const logDir = info?.logDir ?? schedulerLogDir(name);
+    const outFile = `${logDir}\\out.log`;
+    const errFile = `${logDir}\\err.log`;
+
+    const tail = (filePath: string, label: string): void => {
+      if (!existsSync(filePath)) {
+        console.log(
+          `[tailsacle-service] ${label}: no log file yet: ${filePath}`,
+        );
+        return;
+      }
+      const content = readFileSync(filePath, "utf8");
+      const lines = content.split("\n").slice(-Math.max(1, opts.lines));
+      console.log(lines.join("\n"));
+    };
+
+    tail(outFile, "stdout");
+    tail(errFile, "stderr");
+
     if (opts.follow) {
       await new Promise<void>((resolve) => {
-        const poll = setInterval(() => {
-          const current = spawnSync(
-            "schtasks",
-            ["/query", "/tn", taskPathFor(name), "/fo", "LIST", "/v"],
-            { encoding: "utf8" },
-          );
-          if (current.status === 0) {
-            console.log(
-              (current.stdout ?? "")
-                .split("\n")
-                .filter((l) => /Status:|Last Run Time|Last Result/.test(l))
-                .join("\n"),
-            );
-          }
-        }, 5000);
-        process.once("SIGINT", () => {
-          clearInterval(poll);
-          resolve();
-        });
-        process.once("SIGTERM", () => {
-          clearInterval(poll);
-          resolve();
-        });
+        const watch = (filePath: string, label: string): void => {
+          if (!existsSync(filePath)) return;
+          watchFile(filePath, { interval: 1000 }, () => {
+            tail(filePath, label);
+          });
+        };
+        watch(outFile, "stdout");
+        watch(errFile, "stderr");
+        process.once("SIGINT", () => resolve());
+        process.once("SIGTERM", () => resolve());
       });
     }
   }

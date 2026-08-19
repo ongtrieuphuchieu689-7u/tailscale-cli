@@ -27,6 +27,12 @@ describe("service platform dispatch", () => {
         expect(manager.constructor.name).toBe("WindowsServiceManager");
         const scheduler = getSchedulerManager();
         expect(scheduler.constructor.name).toBe("WindowsSchedulerManager");
+      } else if (platform === "darwin") {
+        const manager = getServiceManager();
+        expect(manager.constructor.name).toBe("MacOSServiceManager");
+        expect(() => getSchedulerManager()).toThrow(
+          /SERVICE_PLATFORM_UNSUPPORTED/,
+        );
       } else {
         expect(() => getServiceManager()).toThrow(
           /SERVICE_PLATFORM_UNSUPPORTED/,

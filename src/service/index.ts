@@ -1,6 +1,7 @@
 import { LinuxServiceManager } from "./linux.js";
 import { WindowsServiceManager } from "./windows.js";
 import { WindowsSchedulerManager } from "./windows-scheduler.js";
+import { MacOSServiceManager } from "./macos.js";
 import type { ServiceManager } from "./types.js";
 
 export function getServiceManager(): ServiceManager {
@@ -10,9 +11,7 @@ export function getServiceManager(): ServiceManager {
     case "win32":
       return new WindowsServiceManager();
     case "darwin":
-      throw new Error(
-        "SERVICE_PLATFORM_UNSUPPORTED: macOS launchd support is planned but not implemented yet",
-      );
+      return new MacOSServiceManager();
     default:
       throw new Error(
         `SERVICE_PLATFORM_UNSUPPORTED: platform ${process.platform} is not supported`,

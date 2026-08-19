@@ -169,7 +169,25 @@ describe("windows service manager", () => {
   it("install drives winsw directly and registers the service", async () => {
     const tmpProgramData = `${process.cwd()}/.tmp-programdata-test`;
     rmSync(tmpProgramData, { recursive: true, force: true });
-    vi.doUnmock("node:module");
+
+    // Fake node-windows package dir with a placeholder winsw.exe
+    const fakeNodeWindowsRoot = `${tmpProgramData}/_node-windows`;
+    const fakeWinSwDir = `${fakeNodeWindowsRoot}/bin/winsw`;
+    mkdirSync(fakeWinSwDir, { recursive: true });
+    // Write placeholder files so existsSync passes
+    const { writeFileSync: wfs } = await import("node:fs");
+    wfs(`${fakeWinSwDir}/winsw.exe`, "fake");
+    wfs(`${fakeWinSwDir}/winsw.exe.config`, "<config/>");
+
+    vi.doMock("node:module", () => ({
+      createRequire: () => ({
+        resolve: (id: string) => {
+          if (id === "node-windows/package.json")
+            return `${fakeNodeWindowsRoot}/package.json`;
+          throw new Error(`Cannot find module '${id}'`);
+        },
+      }),
+    }));
     vi.resetModules();
     vi.stubGlobal("process", { ...process, platform: "win32" });
     vi.stubEnv("ProgramData", tmpProgramData);
@@ -201,5 +219,6 @@ describe("windows service manager", () => {
       "<argument>relay</argument>",
     );
     rmSync(tmpProgramData, { recursive: true, force: true });
+    vi.doUnmock("node:module");
   });
 });

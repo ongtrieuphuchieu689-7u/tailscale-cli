@@ -57,6 +57,7 @@ import { getServiceManager, getSchedulerManager } from "./service/index.js";
 import type { ServiceManager } from "./service/types.js";
 import { registryFind } from "./service/registry.js";
 import { listeningPortsLinux, lingerEnabled } from "./service/linux.js";
+import { isAdminUser } from "./service/windows.js";
 import { confirm, promptCredential } from "./interactive.js";
 import { verifyEndpointReachable } from "./verify.js";
 import type { Envelope } from "./types.js";
@@ -1722,6 +1723,20 @@ serviceCmd
             "SERVICE_OPTIONS_CONFLICT: --user and --scheduler cannot be combined",
           );
         }
+        // Windows SCM always requires Admin. Check before attempting install so
+        // the error message is actionable rather than a cryptic "access denied".
+        if (
+          process.platform === "win32" &&
+          !options.scheduler &&
+          !isAdminUser()
+        ) {
+          throw new Error(
+            "SERVICE_REQUIRES_ADMIN: installing a Windows SCM service requires an elevated terminal.\n" +
+              '  Option 1: re-run this command in a terminal opened with "Run as Administrator".\n' +
+              "  Option 2: use --scheduler to register via Task Scheduler (no admin required, but only starts after login):\n" +
+              `    tailsacle-cli service install --file ${options.file} --scheduler --yes`,
+          );
+        }
         serviceLog("INFO", `Installing service "${config.name}"...`);
         const manager = options.scheduler
           ? getSchedulerManager()
@@ -1730,6 +1745,7 @@ serviceCmd
           user: options.user,
           scheduler: options.scheduler,
         });
+
         serviceLog("OK", `Service "${config.name}" installed and started`);
         const warnings: string[] = [];
         if (result.portsListening?.length) {

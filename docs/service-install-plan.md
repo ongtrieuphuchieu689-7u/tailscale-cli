@@ -203,198 +203,104 @@ export interface ServiceManager {
 
 ### 5.1 Windows (src/service/windows.ts)
 
-**Cơ chế:** `node-windows` (ưu tiên) → fallback sang tự generate WinSW v3 XML.
+**Cơ chế thực tế đã triển khai:** Trích xuất binary `winsw.exe` & `winsw.exe.config` từ package `node-windows` (được dynamic import qua `createRequire`), tự sinh file XML cấu hình qua `renderWinSwXml()`, và trực tiếp thực thi `winsw.exe install` / `winsw.exe start`.
 
 **Quy trình install:**
 1. Validate config (tên hợp lệ, script tồn tại, ports không conflict).
-2. **Check quyền admin trước tiên** bằng `node-windows.isAdminUser()`. `svc.install()` **không** tự kích hoạt UAC prompt — nếu process hiện tại không chạy elevated, nó fail thẳng với lỗi "access denied", không có popup nào tự bật lên. Đây là hành vi thực tế đã kiểm chứng của package, không phải giả định.
-3. Nếu chưa elevated:
-   - User thuộc nhóm Administrators nhưng terminal chưa "Run as Administrator" → tự re-spawn process qua PowerShell `Start-Process -Verb RunAs` để bật UAC prompt thật, rồi tiếp tục install trong process con.
-   - User là Standard User thật sự (không thuộc nhóm Administrators) → không có cách nào vượt UAC từ code. In lỗi rõ ràng: "Cần chạy trong terminal Administrator, hoặc dùng `service install --scheduler` (Task Scheduler, không cần admin, xem §9)".
-4. Resolve đường dẫn tuyệt đối của node.exe và script.
-5. Tạo WinSW service definition qua `node-windows.Service`.
-6. Gọi `svc.install()` (đã chắc chắn elevated ở bước 3).
-7. Set `StartType = Automatic` để service tự start khi boot.
-8. Ghi vào registry.json.
-9. In JSON envelope với service name, executable path, log dir.
+2. **Kiểm tra quyền admin:** hàm `isAdminUser()` kiểm tra role Administrator bằng PowerShell script `[Security.Principal.WindowsPrincipal]`.
+3. Resolve binary WinSW từ `node-windows/bin/winsw/winsw.exe` và thư mục `ProgramData\tailsacle-cli\services\<name>\`.
+4. Copy `winsw.exe` và `winsw.exe.config` sang thư mục đích, tạo file `<name>.xml` từ `renderWinSwXml()`.
+5. Gọi `winsw.exe install` và `winsw.exe start`.
+6. Ghi thông tin service vào registry `~/.tailsacle-cli/services.json`.
+7. Trả về kết quả cài đặt và trạng thái service.
 
 **Log (Windows):**
 - WinSW ghi stdout/stderr vào `<logDir>/<name>.out.log` và `<name>.err.log`.
-- `service logs --follow` sẽ tail -f hai file này (dùng fs.watch hoặc readline).
-- Rotation: theo `maxSizeMb` + `keepFiles` trong config.
+- `service logs --follow` tail hai file này bằng `watchFile` và readline.
+- Rotation: cấu hình `<sizeThreshold>` và `<keepFiles>` trong XML dựa theo config.
 
 **Privilege:**
-- Cần Admin để đăng ký service — giới hạn cứng của Windows SCM (`CreateService` API luôn đòi admin token), không phụ thuộc lib nào (`node-windows`, WinSW tự bundle, hay `sc.exe` thẳng đều như nhau).
-- Check bằng `isAdminUser()` (không dùng `net session` — lệnh đó cũng cần elevated để chạy đúng, dễ false-negative).
-- Nếu không phải admin → in hướng dẫn cụ thể như bước 3 ở trên, không chỉ nói chung chung "mở lại terminal".
-
-**Compatibility:**
-- `node-windows` bundle theo **WinSW bản cũ** (biên dịch .NET Framework, không phải WinSW v3/.NET 6) — bản này thường **đã có sẵn** trên Windows 10/11 (built-in .NET Framework), nên bước check `dotnet --version` là **thừa** khi dùng `node-windows` và nên bỏ.
-- Chỉ cần check `.NET 6+ Runtime` nếu đi theo "Phương án 2: tự bundle WinSW v3" (§8) — hai phương án đang dùng 2 bản WinSW khác nhau, cần chọn 1 và xóa ghi chú compatibility của phương án còn lại để tránh nhầm lẫn khi code.
-
-### 5.2 Linux (src/service/linux.ts)
-
-**Cơ chế:** Generate systemd unit file + gọi systemctl.
-
-**System service** (/etc/systemd/system/<name>.service — cần sudo):
-
-```ini
-[Unit]
-Description={{description}}
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User={{user}}
-WorkingDirectory={{workingDir}}
-ExecStart={{nodePath}} {{scriptArgs}}
-Restart=on-failure
-RestartSec={{delaySeconds}}s
-Environment=KEY=VALUE
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier={{name}}
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**User service** (~/.config/systemd/user/<name>.service — không cần sudo, flag --user):
-- Thay `WantedBy=multi-user.target` → `WantedBy=default.target`
-- Dùng `systemctl --user enable --now <name>`
-
-**Quy trình install:**
-1. Detect systemd có chạy không.
-2. Resolve node path (which node hoặc process.execPath).
-3. Render template → write unit file.
-4. `systemctl daemon-reload`
-5. `systemctl enable --now <name>`
-6. Verify: `systemctl is-active <name>` phải trả về "active".
-7. Ghi vào registry.json.
-
-**Log (Linux):**
-- `service logs --follow` → spawn `journalctl -u <name> -f -n 50` và pipe stdout.
-- `service logs --lines 100` → `journalctl -u <name> -n 100 --no-pager`.
-- Không cần cấu hình rotation — journald tự quản lý.
-
-**Privilege:**
-- System service: cần sudo. Nếu thiếu → gợi ý --user flag.
-- User service: không cần sudo, nhưng cần `loginctl enable-linger <user>` để auto-start khi boot.
-
-### 5.3 Kiểm tra sau install (tích hợp trong service install)
-
-```
-[tailsacle-service] INFO  Installing service "tailsacle-relay"...
-[tailsacle-service] OK    Service file written: /etc/systemd/system/tailsacle-relay.service
-[tailsacle-service] OK    daemon-reload: done
-[tailsacle-service] OK    Service enabled and started
-[tailsacle-service] OK    Status: active (running) — PID 12345, uptime 3s
-[tailsacle-service] OK    Port 5432: LISTEN ✓
-[tailsacle-service] OK    Port 5433: LISTEN ✓
-[tailsacle-service] OK    Port 5434: LISTEN ✓
-```
-
----
-
-## 6. Logging design
-
-### Format thống nhất
-
-```
-[tailsacle-service] 2026-08-19T16:04:41+07:00  INFO   Installing service "tailsacle-relay"...
-[tailsacle-service] 2026-08-19T16:04:42+07:00  INFO   Writing unit file...
-[tailsacle-service] 2026-08-19T16:04:43+07:00  OK     Service is active — PID 12345
-[tailsacle-service] 2026-08-19T16:04:43+07:00  WARN   loginctl linger not enabled — service won't auto-start on boot
-[tailsacle-service] 2026-08-19T16:04:43+07:00  ERROR  Port 5432 is already in use
-```
-
-- Level: `INFO`, `OK`, `WARN`, `ERROR`
-- Màu ANSI: xanh lá (OK), vàng (WARN), đỏ (ERROR) — tắt khi không phải TTY hoặc khi --json
-- Flag `--json` → toàn bộ output là JSON envelope chuẩn (như các command khác trong CLI)
+- Cần Admin để đăng ký service SCM.
+- Nếu không có quyền Admin, hướng dẫn dùng `service install --scheduler` (Windows Task Scheduler).
 
 ---
 
 ## 7. Roadmap triển khai (Phases)
 
-### Phase 1 — Core (Linux + Windows)
+### Phase 1 — Core (Linux + Windows) ✅ [Đã hoàn thành]
 
-- [ ] `src/service/types.ts` — Define ServiceConfig, ServiceStatus, ServiceManager
-- [ ] `src/service/config.ts` — Load, validate, generate config file
-- [ ] `src/service/registry.ts` — Persist installed service list
-- [ ] `src/service/linux.ts` — systemd implementation
-- [ ] `src/service/windows.ts` — node-windows / WinSW implementation, kèm check `isAdminUser()` + elevate flow (§5.1)
-- [ ] `src/service/windows-scheduler.ts` — fallback Task Scheduler (`--scheduler`, không cần admin, xem §9)
-- [ ] `src/service/index.ts` — Platform dispatch
-- [ ] `src/cli.ts` — Thêm `service` command với các subcommand
-- [ ] `src/manifest.ts` — Cập nhật agent manifest
-- [ ] Unit tests — mock execSync, mock fs.writeFileSync
-- [ ] `service init` sinh file mẫu chính xác
-- [ ] `service install` + verify
-- [ ] `service uninstall`
-- [ ] `service status` + --json
-- [ ] `service logs` + --follow
-- [ ] `service start|stop|restart`
-- [ ] `service list`
+- [x] `src/service/types.ts` — Define ServiceConfig, ServiceStatus, ServiceManager
+- [x] `src/service/config.ts` — Load, validate, generate config file
+- [x] `src/service/registry.ts` — Persist installed service list (atomic write tmp + rename)
+- [x] `src/service/linux.ts` — systemd implementation (system/user scope, lingering check, proc net tcp check)
+- [x] `src/service/windows.ts` — node-windows standalone WinSW extraction + XML generator
+- [x] `src/service/windows-scheduler.ts` — fallback Task Scheduler (`--scheduler`, không cần admin qua `schtasks`)
+- [x] `src/service/index.ts` — Platform dispatch
+- [x] `src/cli.ts` — Tích hợp 9 subcommand `service` (`init`, `install`, `uninstall`, `status`, `logs`, `start`, `stop`, `restart`, `list`)
+- [x] Unit tests đầy đủ: `service-config.test.ts`, `service-registry.test.ts`, `service-linux.test.ts`, `service-windows.test.ts`, `service-index.test.ts`
+- [x] CI workflow `.github/workflows/service-install-test.yml` kiểm thử cả Linux user unit và Windows SCM
 
-### Phase 2 — Polish & Workflows
+### Phase 2 — Polish & Workflows [Đang triển khai]
 
-- [ ] `.github/workflows/service-install-test.yml` — CI test trên ubuntu-latest + windows-latest
-- [ ] `examples/service-config.sample.jsonc` — file mẫu đầy đủ
-- [ ] Cập nhật README.md, docs/usage.md, examples/README.md
+- [x] `.github/workflows/service-install-test.yml` — CI test trên ubuntu-latest + windows-latest
+- [ ] `examples/service-config.sample.jsonc` — file cấu hình mẫu chi tiết cho nhiều kịch bản relay
+- [ ] Cập nhật tài liệu chính thức: `README.md`, `docs/usage.md`, `examples/README.md`
 - [ ] macOS launchd support (`src/service/macos.ts`)
 
-### Phase 3 — Advanced
+### Phase 3 — Advanced [Kế hoạch tiếp theo]
 
-- [ ] Hỗ trợ nhiều config profile (--profile production|staging)
-- [ ] `service upgrade` — cập nhật args mà không gỡ cài đặt
+- [ ] Hỗ trợ nhiều config profile (`--profile production|staging`)
+- [ ] `service upgrade` — cập nhật args và restart service mà không cần uninstall
 - [ ] Healthcheck endpoint tùy chỉnh (HTTP GET verify sau start)
 - [ ] Windows Event Log integration
 
 ---
 
-## 8. Dependencies cần thêm
+## 8. Dependencies đã cấu hình
 
 ```jsonc
-// package.json — runtime dependencies
+// package.json — optionalDependencies
 {
-  "node-windows": "^1.0.0-beta.8"  // Windows only — dynamic import trong windows.ts
+  "optionalDependencies": {
+    "node-windows": "^1.0.0-beta.8"  // Dynamic load trên Windows, không gây lỗi khi chạy trên Linux/macOS
+  }
 }
 ```
 
-> **Ghi chú quan trọng:** `node-windows` chỉ được `import()` động trong `src/service/windows.ts`
-> khi `process.platform === 'win32'`. Trên Linux/macOS, module này không bao giờ được load.
->
-> **Phương án thay thế zero-dependency:** Bundle WinSW v3 binary trực tiếp vào package
-> (trong `bin/winsw/`) và generate XML thủ công. Kiểm soát hoàn toàn, không phụ thuộc
-> vào npm package có thể bị abandon. **Phương án an toàn nhất cho long-term.**
-
 ---
 
-## 9. Điểm mở rộng tương lai
+## 9. Điểm mở rộng và lưu ý kỹ thuật
 
 | Tính năng | Ghi chú |
 |---|---|
-| **Windows Task Scheduler** (`--scheduler`) | **Đưa vào Phase 1**, không để Phase 3 — vì SCM luôn cần admin (giới hạn cứng, xem §5.1), đây là con đường duy nhất chạy nền trên Windows không cần admin, tương đương vai trò của `systemd --user` bên Linux. `schtasks /create /sc onlogon` (không tick "run with highest privileges"). Giới hạn cần nêu rõ với user: chỉ start khi user đã login (không chạy trước khi login như service thật), và cơ chế retry-on-crash yếu hơn SCM/systemd (dùng thêm trigger `/ri` để retry định kỳ thay vì restart tức thời) |
-| macOS launchd | Sinh .plist XML vào ~/Library/LaunchAgents/ |
-| Docker/container | Không cần service install — relay --file làm entrypoint |
-| Systemd socket activation | Service chỉ start khi có connection (lazy start) |
-| Ansible/Terraform provisioner | service init --format ansible sinh task YAML |
+| **Windows Task Scheduler** (`--scheduler`) | Đã triển khai trong `src/service/windows-scheduler.ts`. Dùng `schtasks /create /sc onlogon`. Lưu ý: task chạy không cần admin, `service logs` hiện tại hiển thị metadata run history từ `schtasks /query /v`. |
+| **macOS launchd** | Sinh file `.plist` XML vào `~/Library/LaunchAgents/` và dùng `launchctl load/unload`. |
+| **Docker/container** | Không cần service install — chạy `relay --file` làm PID 1 entrypoint. |
 
 ---
 
-## 10. Câu hỏi cần quyết định trước khi triển khai
+## 10. Quyết định kỹ thuật đã chốt (Sau Implementation)
 
-1. **Bundle WinSW hay dùng `node-windows`?**
-   - `node-windows`: ít code hơn, npm package khá cũ, bundle theo **WinSW bản .NET Framework cũ** (không phải v3) — nhưng chính vì thế thường **không cần cài thêm .NET runtime** trên Win10/11 (đã có sẵn), đơn giản hơn cho end-user.
-   - Bundle WinSW v3: không phụ thuộc npm, thêm ~5MB binary, kiểm soát hoàn toàn, nhưng cần .NET 6+ runtime — có thể phải tự bundle self-contained build để tránh bắt user cài thêm.
-   - *Gợi ý: Bắt đầu với `node-windows` (ít friction cài đặt hơn cho user), có kế hoạch migration nếu bị abandon. Dù chọn nhánh nào, quy trình elevate ở §5.1 (check `isAdminUser()` trước, không dựa vào UAC tự bật) áp dụng như nhau.*
+1. **WinSW**: Sử dụng binary bundle trong `node-windows` kết hợp với custom XML generator (`renderWinSwXml`) để không phụ thuộc vào wrapper runtime của package.
+2. **macOS Support**: Để Phase 2.
+3. **Linux Service Scope**: Mặc định là System service (yêu cầu sudo), hỗ trợ `--user` cho rootless user service (kèm cảnh báo `loginctl enable-linger`).
+4. **Log Streaming Windows**: Dùng `watchFile` để tail file `.out.log` và `.err.log` sinh bởi WinSW.
 
-2. **Có bổ sung macOS (Phase 1) hay để Phase 2?**
+---
 
-3. **User service (rootless) có phải default trên Linux không?**
-   - Gợi ý: Default là system service (cần sudo), thêm `--user` flag cho rootless.
-   - Cần lưu ý: phải chạy `loginctl enable-linger` để auto-start khi boot.
+## 11. Các công việc cần thực hiện tiếp theo (Action Items)
 
-4. **Log streaming trên Windows**: dùng readline/fs.watch để tail file log của WinSW,
-   hay tích hợp Windows Event Log API?
+Dựa trên kết quả review codebase, các bước tiếp theo cần triển khai gồm:
+
+1. **Bổ sung tích hợp UAC elevation trong CLI (`src/cli.ts` / `src/service/windows.ts`):**
+   - Khi chạy `service install` trên Windows (không có flag `--scheduler`) mà `isAdminUser()` trả về `false`, tự động gọi `elevateCommand()` hoặc hiển thị thông báo hướng dẫn rõ ràng chuyển sang `--scheduler`.
+
+2. **Cải tiến logging cho Task Scheduler (`src/service/windows-scheduler.ts`):**
+   - Cập nhật `taskCommand` để redirect stdout/stderr ra file log trong `~/.tailsacle-cli/logs/<name>.log` để subcommand `service logs` có thể stream/tail log thật sự của tiến trình thay vì chỉ đọc metadata từ `schtasks`.
+
+3. **Cập nhật Documentation & Examples:**
+   - Thêm `examples/service-config.sample.jsonc`.
+   - Cập nhật tài liệu lệnh `service` trong `README.md` và `docs/usage.md`.
+
+4. **Triển khai Phase 2 — macOS launchd (`src/service/macos.ts`):**
+   - Hỗ trợ tạo `.plist` và quản lý qua `launchctl`.
