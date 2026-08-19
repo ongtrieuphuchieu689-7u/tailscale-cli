@@ -174,6 +174,16 @@ async function removeDirRetry(dir: string, attempts = 5): Promise<void> {
   }
 }
 
+async function scStopAndDelete(name: string): Promise<void> {
+  spawnSync("sc", ["stop", name], { encoding: "utf8" });
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const output = scQuery(name);
+    if (!output || /STOPPED/.test(output)) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  spawnSync("sc", ["delete", name], { encoding: "utf8" });
+}
+
 export function parseScStatus(name: string, output: string): ServiceStatus {
   if (!output) return { name, status: "unknown" };
   const stateMatch = /STATE\s*:\s*\d+\s+(\w+)/.exec(output);
@@ -244,15 +254,7 @@ export class WindowsServiceManager implements ServiceManager {
       throw new Error(`SERVICE_NOT_FOUND: service "${name}" is not registered`);
     }
     const serviceDir = info.unitPath ?? windowsServiceDir(name);
-    const exePath = joinPath(serviceDir, `${name}.exe`);
-    if (existsSync(exePath)) {
-      runWinSw(
-        exePath,
-        ["uninstall"],
-        `SERVICE_WINDOWS_UNINSTALL_FAILED`,
-        true,
-      );
-    }
+    await scStopAndDelete(name);
     await removeDirRetry(serviceDir);
     await registryRemove(name);
   }
