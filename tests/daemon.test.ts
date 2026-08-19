@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -38,6 +39,28 @@ async function writePid(pid: number): Promise<void> {
     })}\n`,
     "utf8",
   );
+}
+
+function pidCmdline(pid: number): string | undefined {
+  if (process.platform !== "linux") return undefined;
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ");
+  } catch {
+    return undefined;
+  }
+}
+
+async function waitForCmdline(
+  pid: number,
+  needle: string,
+  timeoutMs = 5000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const cmdline = pidCmdline(pid);
+    if (cmdline?.includes(needle)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 describe("userspace daemon lifecycle tracking", () => {
@@ -89,6 +112,7 @@ describe("userspace daemon lifecycle tracking", () => {
       );
       const pid = child.pid!;
       await writePid(pid);
+      if (process.platform === "linux") await waitForCmdline(pid, "tailscaled");
       const result = await stopUserspaceDaemon();
       if (process.platform === "win32") {
         // Userspace daemons are only started and tracked off-Windows; on
@@ -118,6 +142,7 @@ describe("userspace daemon lifecycle tracking", () => {
       );
       const pid = child.pid!;
       await writePid(pid);
+      if (process.platform === "linux") await waitForCmdline(pid, "tailscaled");
       if (process.platform === "win32") {
         await expect(trackedUserspaceSocket()).resolves.toBeUndefined();
       } else {
