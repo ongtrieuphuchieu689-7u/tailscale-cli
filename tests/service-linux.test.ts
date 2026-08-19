@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import type { MockInstance } from "vitest";
 
 const mockSpawnSync = vi.fn();
@@ -14,7 +14,6 @@ import {
   detectRelayPorts,
   LinuxServiceManager,
 } from "../src/service/linux.js";
-import { maskEnv } from "../src/service/config.js";
 import type { ServiceConfig } from "../src/service/types.js";
 
 const fakeHome = "/tmp/ts-service-linux-home";
@@ -53,7 +52,7 @@ function systemctlCalls(): Array<{ cmd: string; args: string[] }> {
   }));
 }
 
-describe("linux service manager", () => {
+describe.skipIf(process.platform !== "linux")("linux service manager", () => {
   beforeEach(() => {
     mockSpawnSync.mockReset();
     mkdirSync(fakeHome, { recursive: true });
@@ -204,18 +203,8 @@ describe("linux service manager", () => {
     await expect(manager.install(config(), { user: true })).rejects.toThrow(
       /SERVICE_SYSTEMCTL_FAILED/,
     );
-    const fs = require("node:fs");
     expect(
-      fs.existsSync(`${fakeHome}/.config/systemd/user/my-relay.service`),
+      existsSync(`${fakeHome}/.config/systemd/user/my-relay.service`),
     ).toBe(false);
-  });
-
-  it("masks secret-like env values", () => {
-    const masked = maskEnv({
-      NODE_ENV: "production",
-      TS_CLIENT_SECRET: "tskey-client-abc",
-    });
-    expect(masked.NODE_ENV).toBe("production");
-    expect(masked.TS_CLIENT_SECRET).toBe("****");
   });
 });

@@ -55,9 +55,6 @@ export class WindowsSchedulerManager implements ServiceManager {
         `SERVICE_ALREADY_EXISTS: scheduled task "${taskPathFor(config.name)}" already exists`,
       );
     }
-    const retrySeconds = config.restart.onFailure
-      ? Math.max(1, config.restart.delaySeconds)
-      : 0;
     const args = [
       "/create",
       "/tn",
@@ -68,9 +65,6 @@ export class WindowsSchedulerManager implements ServiceManager {
       "onlogon",
       "/f",
     ];
-    if (retrySeconds > 0) {
-      args.push("/ri", String(retrySeconds));
-    }
     schtasks(args);
     const info: ServiceInfo = {
       name: config.name,

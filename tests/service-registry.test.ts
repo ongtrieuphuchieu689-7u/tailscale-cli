@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, rmSync } from "node:fs";
+import { join as joinPath } from "node:path";
 import os from "node:os";
 import {
   registryAdd,
@@ -70,7 +71,9 @@ describe("service registry", () => {
   });
 
   it("registryPath points at the home directory registry file", () => {
-    expect(registryPath()).toBe(`${fakeHome}/.tailsacle-cli/services.json`);
+    expect(registryPath()).toBe(
+      joinPath(fakeHome, ".tailsacle-cli", "services.json"),
+    );
   });
 
   it("add replaces an existing entry with the same name", async () => {

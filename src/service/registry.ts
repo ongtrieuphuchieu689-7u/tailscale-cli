@@ -10,7 +10,11 @@ import os from "node:os";
 import type { ServiceInfo } from "./types.js";
 
 export function registryPath(): string {
-  return joinPath(os.homedir(), ".tailsacle-cli", "services.json");
+  return joinPath(
+    process.env.HOME ?? os.homedir(),
+    ".tailsacle-cli",
+    "services.json",
+  );
 }
 
 let writeQueue: Promise<unknown> = Promise.resolve();

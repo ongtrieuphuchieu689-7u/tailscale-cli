@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'src/service/**'
-      - 'docs/service-install-plan.md'
-      - 'docs/service-install-verification.md'
-      - '.github/workflows/service-install-test.yml'
+      - "src/service/**"
+      - "docs/service-install-plan.md"
+      - "docs/service-install-verification.md"
+      - ".github/workflows/service-install-test.yml"
 
 permissions:
   contents: read
@@ -121,13 +121,21 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies & Build CLI
+      - name: Install dependencies
         shell: pwsh
-        run: |
-          npm ci
-          npm run check
-          npm run build
-          npm link
+        run: npm ci
+
+      - name: Run unit tests & typecheck
+        shell: pwsh
+        run: npm run check
+
+      - name: Build CLI
+        shell: pwsh
+        run: npm run build
+
+      - name: Link CLI
+        shell: pwsh
+        run: npm link
 
       - name: Test Service Init
         shell: pwsh
@@ -177,3 +185,65 @@ jobs:
         shell: pwsh
         run: |
           tailsacle-cli service uninstall --name win-relay-svc --yes --json
+
+  test-windows-scheduler:
+    name: Windows Task Scheduler Test (schtasks, no admin)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        shell: pwsh
+        run: npm ci
+
+      - name: Build CLI
+        shell: pwsh
+        run: npm run build
+
+      - name: Link CLI
+        shell: pwsh
+        run: npm link
+
+      - name: Init Config for Scheduler
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "C:\tmp\ts-sched-test"
+          tailsacle-cli service init --name win-sched-svc --out "C:\tmp\ts-sched-test\service.jsonc"
+          node -e '
+            const fs = require("fs");
+            const content = fs.readFileSync("C:/tmp/ts-sched-test/service.jsonc", "utf8")
+              .replace(/\/\/.*$/gm, "")
+              .replace(/\/\*[\s\S]*?\*\//gm, "");
+            const cfg = JSON.parse(content);
+            cfg.args = ["relay", "--listen", "18889", "--target", "127.0.0.1:19999"];
+            fs.writeFileSync("C:/tmp/ts-sched-test/service.json", JSON.stringify(cfg, null, 2));
+          '
+
+      - name: Install via Task Scheduler
+        shell: pwsh
+        run: |
+          tailsacle-cli service install --file "C:\tmp\ts-sched-test\service.json" --scheduler --yes --json
+          schtasks.exe /query /tn "tailsacle-cli\win-sched-svc"
+
+      - name: Run & Verify Scheduler Task
+        shell: pwsh
+        run: |
+          tailsacle-cli service start --name win-sched-svc
+          Start-Sleep -Seconds 3
+          schtasks.exe /query /tn "tailsacle-cli\win-sched-svc" /v /fo list
+          tailsacle-cli service status --name win-sched-svc --json
+
+      - name: Stop & Uninstall Scheduler Task
+        shell: pwsh
+        run: |
+          tailsacle-cli service stop --name win-sched-svc
+          tailsacle-cli service uninstall --name win-sched-svc --yes --json
+          schtasks.exe /query /tn "tailsacle-cli\win-sched-svc" 2>&1 | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "scheduler task still exists" }

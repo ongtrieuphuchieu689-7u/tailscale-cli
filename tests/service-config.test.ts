@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import {
   generateSampleConfig,
   loadServiceConfig,
@@ -8,7 +9,7 @@ import {
   maskEnv,
 } from "../src/service/config.js";
 
-const tmpDir = "/tmp/ts-service-config-test";
+const tmpDir = resolvePath("/tmp/ts-service-config-test");
 
 describe("service config", () => {
   beforeEach(() => {
