@@ -1,0 +1,125 @@
+name: Tailscale PostgreSQL Test
+
+# Starts a lightweight dockerized PostgreSQL on a GitHub-hosted runner, joins
+# the tailnet and exposes it through `tailsacle-cli serve --tcp` (raw TCP
+# forwarder — no Host-header matching, so both the tailnet IP and the MagicDNS
+# name work). Join the tailnet from your device, then connect with any
+# PostgreSQL client (psql / DBeaver / ...).
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: "Minutes to keep PostgreSQL reachable on the tailnet (max 360)"
+        required: false
+        default: "60"
+      tailnet_pg_port:
+        description: "PostgreSQL port exposed on the tailnet via serve --tcp"
+        required: false
+        default: "5432"
+      local_pg_port:
+        description: "Local port where the dockerized Postgres is published"
+        required: false
+        default: "15432"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tailscale-postgres
+  cancel-in-progress: true
+
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 390
+    env:
+      TS_CLIENT_SECRET: ${{ secrets.TS_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install tailsacle-cli@latest from the npm registry
+        run: |
+          npm install --global tailsacle-cli@latest
+          echo "installed cli version: $(tailsacle-cli --version)"
+          echo "npm registry latest:   $(npm view tailsacle-cli version)"
+
+      - name: Start a lightweight PostgreSQL in Docker
+        run: |
+          docker run -d --name pgtest \
+            -e POSTGRES_USER=testuser \
+            -e POSTGRES_PASSWORD=pgtest123 \
+            -e POSTGRES_DB=testdb \
+            -p 127.0.0.1:${{ inputs.local_pg_port }}:5432 \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            if docker exec pgtest pg_isready -U testuser -d testdb > /dev/null 2>&1; then
+              echo "postgres is ready on 127.0.0.1:${{ inputs.local_pg_port }}"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Seed test data
+        run: |
+          docker exec pgtest psql -U testuser -d testdb <<'SQL'
+          CREATE TABLE IF NOT EXISTS echo (
+            id serial PRIMARY KEY,
+            msg text NOT NULL,
+            ts timestamptz NOT NULL DEFAULT now()
+          );
+          INSERT INTO echo (msg) VALUES ('hello from tailnet'), ('second row');
+          SQL
+          docker exec pgtest psql -U testuser -d testdb -c "SELECT * FROM echo ORDER BY id;"
+
+      - name: Join the tailnet (tailsacle-cli up)
+        run: tailsacle-cli up --yes --apply-policy --no-ssh --json
+
+      - name: Expose PostgreSQL on the tailnet (tailsacle-cli serve --tcp)
+        run: |
+          tailsacle-cli serve "tcp://127.0.0.1:${{ inputs.local_pg_port }}" \
+            --tcp ${{ inputs.tailnet_pg_port }} --json
+
+      - name: Collect tailnet IP and MagicDNS name (tailsacle-cli status)
+        id: access
+        run: |
+          tailsacle-cli status --json > /tmp/tailscale-status.json
+          node - <<'NODE'
+          const fs = require("fs");
+          const raw = JSON.parse(fs.readFileSync("/tmp/tailscale-status.json", "utf8"));
+          const status = raw.resolved ?? raw;
+          const self = status.Self ?? {};
+          const ip = (self.TailscaleIPs ?? []).find((v) => v.startsWith("100."));
+          const dns = String(self.DNSName ?? "").replace(/\.$/, "");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `tailnet_ip=${ip ?? ""}\ntailnet_dns=${dns ?? ""}\n`);
+          console.log("tailnet_ip:", ip ?? "(none)");
+          console.log("tailnet_dns:", dns ?? "(none)");
+          NODE
+
+      - name: Keep alive and report access info
+        env:
+          TAILNET_IP: ${{ steps.access.outputs.tailnet_ip }}
+          TAILNET_DNS: ${{ steps.access.outputs.tailnet_dns }}
+          PG_PORT: ${{ inputs.tailnet_pg_port }}
+          DURATION_MINUTES: ${{ inputs.duration_minutes }}
+        run: |
+          {
+            echo "## Tailscale PostgreSQL — access info"
+            echo ""
+            echo "Join the tailnet from your device, then connect with any PostgreSQL client:"
+            echo ""
+            echo '```'
+            echo "psql \"host=${TAILNET_IP} port=${PG_PORT} user=testuser password=pgtest123 dbname=testdb\""
+            echo "# hoặc qua MagicDNS:"
+            echo "psql \"host=${TAILNET_DNS} port=${PG_PORT} user=testuser password=pgtest123 dbname=testdb\""
+            echo '```'
+            echo ""
+            echo "Test query: \`SELECT * FROM echo;\` (2 rows seeded)"
+            echo "The node is ephemeral (auto-removed when the job ends) and stays up ~${DURATION_MINUTES} minutes."
+          } > "$GITHUB_STEP_SUMMARY"
+          echo "Keeping PostgreSQL alive for ${DURATION_MINUTES} minutes..."
+          sleep "$((DURATION_MINUTES * 60))"
