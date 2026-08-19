@@ -56,13 +56,14 @@ jobs:
             -e POSTGRES_DB=testdb \
             -p 127.0.0.1:${{ inputs.local_pg_port }}:5432 \
             postgres:16-alpine
-          for i in $(seq 1 30); do
-            if docker exec pgtest pg_isready -U testuser -d testdb > /dev/null 2>&1; then
+          for i in $(seq 1 60); do
+            if docker exec pgtest psql -U testuser -d testdb -c "SELECT 1" > /dev/null 2>&1; then
               echo "postgres is ready on 127.0.0.1:${{ inputs.local_pg_port }}"
               break
             fi
             sleep 1
           done
+          docker exec pgtest psql -U testuser -d testdb -c "SELECT 1"
 
       - name: Seed test data
         run: |
