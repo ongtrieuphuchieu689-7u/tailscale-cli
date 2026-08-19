@@ -22,6 +22,22 @@ on:
         description: "Local port of the echo server"
         required: false
         default: "8080"
+      peer_test_ip:
+        description: "Optional tailnet IP of another node to test this runner against (cross-peer verification)"
+        required: false
+        default: ""
+      peer_test_dns:
+        description: "Optional MagicDNS name of another node to test this runner against"
+        required: false
+        default: ""
+      peer_test_port:
+        description: "Tailnet port for the cross-peer test"
+        required: false
+        default: "80"
+      tcp_port:
+        description: "Tailnet TCP forwarder port (raw IP access; serve --tcp works without Host-header matching)"
+        required: false
+        default: "8080"
 
 permissions:
   contents: read
@@ -69,6 +85,28 @@ jobs:
           tailsacle-cli serve "http://127.0.0.1:${{ inputs.local_port }}" \
             --http ${{ inputs.tailnet_http_port }} --json
 
+      - name: Expose a raw TCP forwarder on the tailnet (tailsacle-cli serve --tcp)
+        run: |
+          tailsacle-cli serve "tcp://127.0.0.1:${{ inputs.local_port }}" \
+            --tcp ${{ inputs.tcp_port }} --json
+
+      - name: Cross-peer test (optional — verify another tailnet node's serve)
+        if: ${{ inputs.peer_test_ip != '' || inputs.peer_test_dns != '' }}
+        continue-on-error: true
+        env:
+          PEER_IP: ${{ inputs.peer_test_ip }}
+          PEER_DNS: ${{ inputs.peer_test_dns }}
+          PEER_PORT: ${{ inputs.peer_test_port }}
+        run: |
+          if [ -n "$PEER_IP" ]; then
+            echo "== runner -> peer tailnet IP =="
+            curl -fsS -m 15 "http://${PEER_IP}:${PEER_PORT}/ping?from=runner-ip" || echo "(peer IP test failed — serve HTTP routes by Host header, IP access needs the TCP forwarder port)"
+          fi
+          if [ -n "$PEER_DNS" ]; then
+            echo "== runner -> peer MagicDNS name =="
+            curl -fsS -m 15 "http://${PEER_DNS}:${PEER_PORT}/ping?from=runner-dns" || echo "(peer DNS test failed)"
+          fi
+
       - name: Collect tailnet IP and MagicDNS name (tailsacle-cli status)
         id: access
         run: |
@@ -91,6 +129,7 @@ jobs:
           TAILNET_IP: ${{ steps.access.outputs.tailnet_ip }}
           TAILNET_DNS: ${{ steps.access.outputs.tailnet_dns }}
           TAILNET_HTTP_PORT: ${{ inputs.tailnet_http_port }}
+          TCP_PORT: ${{ inputs.tcp_port }}
           DURATION_MINUTES: ${{ inputs.duration_minutes }}
         run: |
           {
@@ -98,12 +137,14 @@ jobs:
             echo ""
             echo "Join the tailnet from your device, then open:"
             echo ""
-            echo "- via tailnet IP: \`http://${TAILNET_IP}:${TAILNET_HTTP_PORT}/?hello=tailnet\`"
-            echo "- via MagicDNS:   \`http://${TAILNET_DNS}:${TAILNET_HTTP_PORT}/?hello=magicdns\`"
+            echo "- via MagicDNS (HTTP, Host-header routed):"
+            echo "  \`http://${TAILNET_DNS}:${TAILNET_HTTP_PORT}/?hello=magicdns\`"
+            echo "- via tailnet IP (raw TCP forwarder, no Host matching):"
+            echo "  \`http://${TAILNET_IP}:${TCP_PORT}/?hello=tailnet\`"
             echo ""
             echo "Every request returns a JSON echo of the request."
-            echo "The runner runs a userspace tailscaled (no TUN), so the URLs work from"
-            echo "other tailnet devices but not from the runner itself."
+            echo "Serve HTTP (:${TAILNET_HTTP_PORT}) routes by Host header, so the IP URL only"
+            echo "works on the TCP forwarder port (:${TCP_PORT})."
             echo "The node is ephemeral (auto-removed when the job ends) and stays up ~${DURATION_MINUTES} minutes."
           } > "$GITHUB_STEP_SUMMARY"
           echo "Keeping the echo server alive for ${DURATION_MINUTES} minutes..."
