@@ -50,13 +50,13 @@ jobs:
       - name: Start PostgreSQL target in Docker
         run: |
           docker run -d --name pg-target \
-            -e POSTGRES_USER=relayuser \
-            -e POSTGRES_PASSWORD=relaypass123 \
-            -e POSTGRES_DB=relaydb \
+            -e POSTGRES_USER=testuser \
+            -e POSTGRES_PASSWORD=pgtest123 \
+            -e POSTGRES_DB=testdb \
             -p 127.0.0.1:${{ inputs.target_pg_port }}:5432 \
             postgres:16-alpine
           for i in $(seq 1 60); do
-            if docker exec pg-target psql -U relayuser -d relaydb -c "SELECT 1" > /dev/null 2>&1; then
+            if docker exec pg-target psql -U testuser -d testdb -c "SELECT 1" > /dev/null 2>&1; then
               echo "postgres target is ready on 127.0.0.1:${{ inputs.target_pg_port }}"
               break
             fi
@@ -65,14 +65,14 @@ jobs:
 
       - name: Seed test data in PostgreSQL target
         run: |
-          docker exec -i pg-target psql -U relayuser -d relaydb <<'SQL'
+          docker exec -i pg-target psql -U testuser -d testdb <<'SQL'
           CREATE TABLE IF NOT EXISTS relay_test (
             id serial PRIMARY KEY,
             payload text NOT NULL
           );
           INSERT INTO relay_test (payload) VALUES ('hello from relay proxy'), ('forwarded successfully');
           SQL
-          docker exec pg-target psql -U relayuser -d relaydb -c "SELECT * FROM relay_test;"
+          docker exec pg-target psql -U testuser -d testdb -c "SELECT * FROM relay_test;"
 
       - name: Start tailsacle-cli TCP relay (background)
         run: |
@@ -84,7 +84,7 @@ jobs:
           # Install psql client locally on runner
           sudo apt-get update && sudo apt-get install -y postgresql-client
           # Query Postgres through relay listen port
-          PGPASSWORD=relaypass123 psql -h 127.0.0.1 -p ${{ inputs.relay_listen_port }} -U relayuser -d relaydb -c "SELECT * FROM relay_test;"
+          PGPASSWORD=pgtest123 psql -h 127.0.0.1 -p ${{ inputs.relay_listen_port }} -U testuser -d testdb -c "SELECT * FROM relay_test;"
           echo "=== RELAY TEST VERIFIED LOCALLY ==="
 
       - name: Join the tailnet (tailsacle-cli up)
@@ -126,9 +126,9 @@ jobs:
             echo "Kết nối tới PostgreSQL thông qua trạm trung chuyển TCP Relay:"
             echo ""
             echo '```bash'
-            echo "psql \"host=${TAILNET_IP} port=${RELAY_PORT} user=relayuser password=relaypass123 dbname=relaydb\""
+            echo "psql \"host=${TAILNET_IP} port=${RELAY_PORT} user=testuser password=pgtest123 dbname=testdb\""
             echo "# hoặc qua MagicDNS:"
-            echo "psql \"host=${TAILNET_DNS} port=${RELAY_PORT} user=relayuser password=relaypass123 dbname=relaydb\""
+            echo "psql \"host=${TAILNET_DNS} port=${RELAY_PORT} user=testuser password=pgtest123 dbname=testdb\""
             echo '```'
             echo ""
             echo "Node sống trong ~${DURATION_MINUTES} phút."

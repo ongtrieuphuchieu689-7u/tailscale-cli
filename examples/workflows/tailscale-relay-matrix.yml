@@ -90,7 +90,7 @@ jobs:
         run: |
           docker run -d --name pg-target-matrix \
             -e POSTGRES_USER=testuser \
-            -e POSTGRES_PASSWORD=testpass123 \
+            -e POSTGRES_PASSWORD=pgtest123 \
             -e POSTGRES_DB=testdb \
             -p 127.0.0.1:15432:5432 \
             postgres:16-alpine
@@ -117,7 +117,7 @@ jobs:
       - name: Verify PostgreSQL communication through Relay
         run: |
           sudo apt-get update && sudo apt-get install -y postgresql-client
-          PGPASSWORD=testpass123 psql -h 127.0.0.1 -p 5432 -U testuser -d testdb -c "SELECT * FROM matrix_test;"
+          PGPASSWORD=pgtest123 psql -h 127.0.0.1 -p 5432 -U testuser -d testdb -c "SELECT * FROM matrix_test;"
           echo "✅ SUCCESS: PostgreSQL TCP Relay query succeeded!"
 
   # Job 3: Integration with Tailnet Serve & Funnel
@@ -143,18 +143,18 @@ jobs:
       - name: Start Target PostgreSQL (Port 15432)
         run: |
           docker run -d --name pg-tailnet \
-            -e POSTGRES_USER=remoteuser \
-            -e POSTGRES_PASSWORD=remotepass123 \
-            -e POSTGRES_DB=remotedb \
+            -e POSTGRES_USER=testuser \
+            -e POSTGRES_PASSWORD=pgtest123 \
+            -e POSTGRES_DB=testdb \
             -p 127.0.0.1:15432:5432 \
             postgres:16-alpine
           for i in $(seq 1 60); do
-            if docker exec pg-tailnet psql -U remoteuser -d remotedb -c "SELECT 1" > /dev/null 2>&1; then
+            if docker exec pg-tailnet psql -U testuser -d testdb -c "SELECT 1" > /dev/null 2>&1; then
               break
             fi
             sleep 1
           done
-          docker exec -i pg-tailnet psql -U remoteuser -d remotedb <<'SQL'
+          docker exec -i pg-tailnet psql -U testuser -d testdb <<'SQL'
           CREATE TABLE IF NOT EXISTS live_demo (id serial primary key, note text);
           INSERT INTO live_demo (note) VALUES ('Ready for Tailnet and Funnel access!');
           SQL
@@ -207,15 +207,15 @@ jobs:
             echo "### 1. Truy cập NỘI BỘ mạng Tailscale (qua Serve TCP 5432):"
             echo '```bash'
             echo "# Kết nối bằng IP Tailnet:"
-            echo "psql \"host=${IP} port=5432 user=remoteuser password=remotepass123 dbname=remotedb\""
+            echo "psql \"host=${IP} port=5432 user=testuser password=pgtest123 dbname=testdb\""
             echo "# Kết nối bằng MagicDNS:"
-            echo "psql \"host=${DNS} port=5432 user=remoteuser password=remotepass123 dbname=remotedb\""
+            echo "psql \"host=${DNS} port=5432 user=testuser password=pgtest123 dbname=testdb\""
             echo '```'
             echo ""
             if [ "$ENABLE_FUNNEL" = "true" ]; then
               echo "### 2. Truy cập CÔNG KHAI ngoài Internet (qua Funnel TCP 10000):"
               echo '```bash'
-              echo "psql \"host=${DNS} port=10000 user=remoteuser password=remotepass123 dbname=remotedb\""
+              echo "psql \"host=${DNS} port=10000 user=testuser password=pgtest123 dbname=testdb\""
               echo '```'
             fi
             echo ""
