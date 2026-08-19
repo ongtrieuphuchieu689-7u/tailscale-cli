@@ -86,19 +86,6 @@ jobs:
           console.log("tailnet_dns:", dns ?? "(none)");
           NODE
 
-      - name: Self-test through the tailnet (IP and MagicDNS)
-        env:
-          TAILNET_IP: ${{ steps.access.outputs.tailnet_ip }}
-          TAILNET_DNS: ${{ steps.access.outputs.tailnet_dns }}
-          TAILNET_HTTP_PORT: ${{ inputs.tailnet_http_port }}
-        run: |
-          echo "== via tailnet IP =="
-          curl -fsS "http://${TAILNET_IP}:${TAILNET_HTTP_PORT}/ping?from=selftest-ip"
-          echo
-          echo "== via MagicDNS internal domain =="
-          curl -fsS "http://${TAILNET_DNS}:${TAILNET_HTTP_PORT}/ping?from=selftest-dns"
-          echo
-
       - name: Keep alive and report access info
         env:
           TAILNET_IP: ${{ steps.access.outputs.tailnet_ip }}
@@ -109,12 +96,14 @@ jobs:
           {
             echo "## Tailscale Echo Server — access info"
             echo ""
-            echo "Join the tailnet from your device (the CLI prints the URL/QR), then open:"
+            echo "Join the tailnet from your device, then open:"
             echo ""
             echo "- via tailnet IP: \`http://${TAILNET_IP}:${TAILNET_HTTP_PORT}/?hello=tailnet\`"
             echo "- via MagicDNS:   \`http://${TAILNET_DNS}:${TAILNET_HTTP_PORT}/?hello=magicdns\`"
             echo ""
             echo "Every request returns a JSON echo of the request."
+            echo "The runner runs a userspace tailscaled (no TUN), so the URLs work from"
+            echo "other tailnet devices but not from the runner itself."
             echo "The node is ephemeral (auto-removed when the job ends) and stays up ~${DURATION_MINUTES} minutes."
           } > "$GITHUB_STEP_SUMMARY"
           echo "Keeping the echo server alive for ${DURATION_MINUTES} minutes..."
