@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
@@ -47,6 +47,14 @@ import {
   policySync,
 } from "./policy.js";
 import type { ResolvedConfig } from "./types.js";
+import {
+  generateSampleConfig,
+  loadServiceConfig,
+  maskEnv,
+  resolveUserName,
+} from "./service/config.js";
+import { getServiceManager, getSchedulerManager } from "./service/index.js";
+import { listeningPortsLinux, lingerEnabled } from "./service/linux.js";
 import { confirm, promptCredential } from "./interactive.js";
 import { verifyEndpointReachable } from "./verify.js";
 import type { Envelope } from "./types.js";
@@ -1604,6 +1612,382 @@ program
       );
     } catch (error) {
       fail("cleanup", error, start);
+    }
+  });
+
+function serviceLog(
+  level: "INFO" | "OK" | "WARN" | "ERROR",
+  message: string,
+): void {
+  if (program.opts<{ json?: boolean }>().json) return;
+  const ts = new Date().toISOString();
+  const colors: Record<string, string> = {
+    INFO: "",
+    OK: "\x1b[32m",
+    WARN: "\x1b[33m",
+    ERROR: "\x1b[31m",
+  };
+  const useColor = Boolean(process.stderr.isTTY);
+  const lvl = useColor ? `${colors[level]}${level}\x1b[0m` : level;
+  console.error(`[tailsacle-service] ${ts}  ${lvl}  ${message}`);
+}
+
+const serviceCmd = program
+  .command("service")
+  .description(
+    "Install, manage and remove a relay/script as a background service (systemd on Linux, Windows SCM or Task Scheduler)",
+  );
+
+serviceCmd
+  .command("init")
+  .description("Generate a sample JSON/JSONC service config file")
+  .option("--name <name>", "service name", "tailsacle-relay")
+  .option("--out <file>", "output file path", ".tailsacle-service.jsonc")
+  .action(async (options: { name: string; out: string }) => {
+    const start = performance.now();
+    try {
+      if (!/^[a-zA-Z0-9-]+$/.test(options.name)) {
+        throw new Error(
+          `SERVICE_NAME_INVALID: only alphanumeric and hyphens allowed, got "${options.name}"`,
+        );
+      }
+      const content = generateSampleConfig(options.name);
+      writeFileSync(options.out, content, "utf8");
+      emit(
+        "service init",
+        { file: resolvePath(options.out), name: options.name },
+        [],
+        ["write sample service config file"],
+        [],
+        start,
+      );
+    } catch (error) {
+      fail("service init", error, start);
+    }
+  });
+
+serviceCmd
+  .command("install")
+  .description(
+    "Install and enable the service from a config file (systemd system/user unit, Windows SCM, or Task Scheduler)",
+  )
+  .requiredOption(
+    "--file <config>",
+    "path to the service config file (JSON/JSONC)",
+  )
+  .option(
+    "--user",
+    "install as a systemd user service (Linux only, no sudo required)",
+  )
+  .option(
+    "--scheduler",
+    "install via Windows Task Scheduler instead of SCM (no admin required)",
+  )
+  .option("--yes", "skip confirmation")
+  .action(
+    async (options: {
+      file: string;
+      user?: boolean;
+      scheduler?: boolean;
+      yes?: boolean;
+    }) => {
+      const start = performance.now();
+      try {
+        const config = loadServiceConfig(options.file);
+        if (
+          !(await confirm(
+            `Install service "${config.name}"?`,
+            Boolean(options.yes),
+          ))
+        ) {
+          throw new Error(
+            "SERVICE_CONFIRMATION_REQUIRED: pass --yes to install without confirmation",
+          );
+        }
+        if (options.user && options.scheduler) {
+          throw new Error(
+            "SERVICE_OPTIONS_CONFLICT: --user and --scheduler cannot be combined",
+          );
+        }
+        serviceLog("INFO", `Installing service "${config.name}"...`);
+        const manager = options.scheduler
+          ? getSchedulerManager()
+          : getServiceManager();
+        const result = await manager.install(config, {
+          user: options.user,
+          scheduler: options.scheduler,
+        });
+        serviceLog("OK", `Service "${config.name}" installed and started`);
+        const warnings: string[] = [];
+        if (result.portsListening?.length) {
+          if (process.platform === "linux") {
+            let listening = listeningPortsLinux();
+            for (
+              let attempt = 0;
+              attempt < 20 &&
+              !result.portsListening.every((p) => listening.includes(p));
+              attempt += 1
+            ) {
+              await new Promise((r) => setTimeout(r, 500));
+              listening = listeningPortsLinux();
+            }
+            for (const port of result.portsListening) {
+              if (listening.includes(port)) {
+                serviceLog("OK", `Port ${port}: LISTEN`);
+              } else {
+                serviceLog(
+                  "WARN",
+                  `Port ${port}: not listening yet (service may still be starting)`,
+                );
+                warnings.push(`PORT_NOT_LISTENING: ${port}`);
+              }
+            }
+          } else {
+            for (const port of result.portsListening) {
+              serviceLog("INFO", `Port ${port}: registered (check via status)`);
+            }
+          }
+        }
+        const envEntries = Object.entries(maskEnv(config.env));
+        if (envEntries.length) {
+          serviceLog(
+            "INFO",
+            `Env: ${envEntries.map(([k, v]) => `${k}=${v}`).join(", ")}`,
+          );
+        }
+        serviceLog(
+          "OK",
+          `Status: ${result.status}${result.pid ? ` — PID ${result.pid}` : ""}`,
+        );
+        if (process.platform === "linux" && result.scope === "user") {
+          const user = resolveUserName(config.user);
+          if (!lingerEnabled(user)) {
+            warnings.push(
+              `SERVICE_LINGER_DISABLED: run "loginctl enable-linger ${user}" so the user service auto-starts on boot`,
+            );
+            serviceLog(
+              "WARN",
+              `loginctl linger not enabled — service won't auto-start on boot (loginctl enable-linger ${user})`,
+            );
+          }
+        }
+        emit(
+          "service install",
+          {
+            installed: true,
+            name: result.name,
+            platform: result.platform,
+            scope: result.scope,
+            unitPath: result.unitPath,
+            status: result.status,
+            pid: result.pid,
+            portsListening: result.portsListening,
+          },
+          warnings,
+          [
+            `install ${result.scope === "user" ? "user" : "system"} service ${result.name}`,
+            ...(result.unitPath ? [`unit file: ${result.unitPath}`] : []),
+          ],
+          result.platform === "linux" && result.scope === "system"
+            ? ["root/sudo for systemd system unit"]
+            : [],
+          start,
+        );
+      } catch (error) {
+        fail("service install", error, start);
+      }
+    },
+  );
+
+serviceCmd
+  .command("uninstall")
+  .description("Uninstall and remove the service (stops it first)")
+  .requiredOption("--name <name>", "service name")
+  .option("--yes", "skip confirmation")
+  .action(async (options: { name: string; yes?: boolean }) => {
+    const start = performance.now();
+    try {
+      if (
+        !(await confirm(
+          `Uninstall service "${options.name}"?`,
+          Boolean(options.yes),
+        ))
+      ) {
+        throw new Error(
+          "SERVICE_CONFIRMATION_REQUIRED: pass --yes to uninstall without confirmation",
+        );
+      }
+      const manager = getServiceManager();
+      await manager.uninstall(options.name);
+      serviceLog("OK", `Service "${options.name}" uninstalled`);
+      emit(
+        "service uninstall",
+        { uninstalled: true, name: options.name },
+        [],
+        [`uninstall service ${options.name}`],
+        [],
+        start,
+      );
+    } catch (error) {
+      fail("service uninstall", error, start);
+    }
+  });
+
+serviceCmd
+  .command("status")
+  .description("Show service status (running/stopped/error, PID, uptime)")
+  .requiredOption("--name <name>", "service name")
+  .action(async (options: { name: string }) => {
+    const start = performance.now();
+    try {
+      const manager = getServiceManager();
+      const status = await manager.status(options.name);
+      serviceLog(
+        "INFO",
+        `Service "${options.name}": ${status.status}${
+          status.pid ? ` (PID ${status.pid})` : ""
+        }${status.uptimeSeconds !== undefined ? `, uptime ${status.uptimeSeconds}s` : ""}${
+          status.restartCount ? `, restarts ${status.restartCount}` : ""
+        }`,
+      );
+      emit("service status", status, [], [], [], start);
+    } catch (error) {
+      fail("service status", error, start);
+    }
+  });
+
+serviceCmd
+  .command("logs")
+  .description(
+    "Show service logs (journald on Linux, WinSW log files on Windows)",
+  )
+  .requiredOption("--name <name>", "service name")
+  .option("--lines <n>", "number of log lines to show", "50")
+  .option("--follow", "stream logs in real time")
+  .action(
+    async (options: { name: string; lines: string; follow?: boolean }) => {
+      const start = performance.now();
+      try {
+        const manager = getServiceManager();
+        const lines = Number(options.lines);
+        if (!Number.isFinite(lines) || lines < 1) {
+          throw new Error(
+            `SERVICE_LOG_LINES_INVALID: --lines must be a positive integer, got ${options.lines}`,
+          );
+        }
+        await manager.logs(options.name, {
+          lines: Math.floor(lines),
+          follow: Boolean(options.follow),
+        });
+        if (program.opts<{ json?: boolean }>().json) {
+          emit(
+            "service logs",
+            { name: options.name, followed: Boolean(options.follow) },
+            [],
+            [],
+            [],
+            start,
+          );
+        }
+      } catch (error) {
+        fail("service logs", error, start);
+      }
+    },
+  );
+
+serviceCmd
+  .command("start")
+  .description("Start the service")
+  .requiredOption("--name <name>", "service name")
+  .action(async (options: { name: string }) => {
+    const start = performance.now();
+    try {
+      const manager = getServiceManager();
+      await manager.start(options.name);
+      const status = await manager.status(options.name);
+      serviceLog("OK", `Service "${options.name}" started`);
+      emit(
+        "service start",
+        status,
+        [],
+        [`start service ${options.name}`],
+        [],
+        start,
+      );
+    } catch (error) {
+      fail("service start", error, start);
+    }
+  });
+
+serviceCmd
+  .command("stop")
+  .description("Stop the service")
+  .requiredOption("--name <name>", "service name")
+  .action(async (options: { name: string }) => {
+    const start = performance.now();
+    try {
+      const manager = getServiceManager();
+      await manager.stop(options.name);
+      const status = await manager.status(options.name);
+      serviceLog("OK", `Service "${options.name}" stopped`);
+      emit(
+        "service stop",
+        status,
+        [],
+        [`stop service ${options.name}`],
+        [],
+        start,
+      );
+    } catch (error) {
+      fail("service stop", error, start);
+    }
+  });
+
+serviceCmd
+  .command("restart")
+  .description("Restart the service")
+  .requiredOption("--name <name>", "service name")
+  .action(async (options: { name: string }) => {
+    const start = performance.now();
+    try {
+      const manager = getServiceManager();
+      await manager.restart(options.name);
+      const status = await manager.status(options.name);
+      serviceLog("OK", `Service "${options.name}" restarted`);
+      emit(
+        "service restart",
+        status,
+        [],
+        [`restart service ${options.name}`],
+        [],
+        start,
+      );
+    } catch (error) {
+      fail("service restart", error, start);
+    }
+  });
+
+serviceCmd
+  .command("list")
+  .description("List services installed by tailsacle-cli")
+  .action(async () => {
+    const start = performance.now();
+    try {
+      const manager = getServiceManager();
+      const entries = await manager.list();
+      if (!program.opts<{ json?: boolean }>().json) {
+        for (const entry of entries) {
+          serviceLog(
+            "INFO",
+            `${entry.name} (${entry.platform}/${entry.scope}) — ${entry.status}${
+              entry.pid ? ` (PID ${entry.pid})` : ""
+            }${entry.installedAt ? `, installed ${entry.installedAt}` : ""}`,
+          );
+        }
+      }
+      emit("service list", entries, [], [], [], start);
+    } catch (error) {
+      fail("service list", error, start);
     }
   });
 

@@ -1,6 +1,6 @@
 {
   "name": "tailsacle-cli",
-  "version": "1.260819.11620",
+  "version": "1.260819.11650",
   "private": false,
   "type": "module",
   "engines": {
@@ -64,5 +64,8 @@
     "tsx": "^4.19.0",
     "typescript": "^5.8.0",
     "vitest": "^3.1.0"
+  },
+  "optionalDependencies": {
+    "node-windows": "^1.0.0-beta.8"
   }
 }

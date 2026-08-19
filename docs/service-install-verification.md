@@ -4,6 +4,25 @@
 > **Mục đích:** Checklist kiểm chứng đầy đủ sau khi hoàn thành Phase 1 & Phase 2.  
 > **Cách dùng:** Đánh dấu `[x]` từng mục sau khi xác nhận thực tế. Tất cả phải pass trước khi bump version và push release.
 
+## Kết quả kiểm chứng — 2026-08-19 (v1.260819.11630+)
+
+> Môi trường kiểm chứng Linux: container `jrei/systemd-ubuntu:22.04` (systemd 249, Node 22.23.2),
+> CLI build từ `main` + `npm link`; test user service với user `testuser` (rootless).
+> Windows: kiểm chứng qua CI `windows-latest` (GitHub runner chạy elevated). Chưa test trên máy Windows thật (đánh dấu `[UNTESTED-HW]`).
+
+| Nhóm | Kết quả |
+|---|---|
+| A. Static | ✅ A1–A8 pass (`npm run typecheck/build/format:check/test/smoke`, `--help`, manifest) |
+| B. Unit tests | ✅ B1–B5 — 173 tests tổng (57 tests service mới), tất cả green |
+| C. Linux thực tế | ✅ C1–C6 pass trong container systemd (system + user service, relay echo verified) |
+| D. Windows SCM | ⏳ Chạy qua CI `windows-latest` (job `test-windows-service`); máy thật `[UNTESTED-HW]` |
+| E. Edge cases | ✅ E1–E9 pass (E9: unit test rollback) |
+| F. Logs | ✅ F1–F2 pass (format `[tailsacle-service] ISO INFO/OK/WARN/ERROR`, mask `****`, envelope OK) |
+| G. CI | ⏳ Workflow `service-install-test.yml` đã dispatch trên GitHub |
+| H. Relay tích hợp | ✅ H1 pass (multi-port relay `--file` qua service, 2 ports LISTEN, restart giữ port); H2 `[UNTESTED-REBOOT]` |
+| I. Uninstall sạch | ✅ I1–I5 pass (unit removed, not-found, registry 0, ports freed) |
+| J. Acceptance gate | ⏳ Chờ release xong |
+
 ---
 
 ## Mục lục
@@ -120,11 +139,11 @@ tailsacle-cli service init --name ts-relay-test --out /tmp/ts-relay-test.jsonc
 cat /tmp/ts-relay-test.jsonc
 ```
 
-- [ ] C1-1: File tồn tại tại path chỉ định
-- [ ] C1-2: File là valid JSON (có thể bỏ comment qua `jsonc-parser` hoặc strip)
-- [ ] C1-3: Field `name` = `"ts-relay-test"`
-- [ ] C1-4: Field `args` có giá trị mặc định hợp lý
-- [ ] C1-5: Comment giải thích từng field (JSONC format)
+- [x] C1-1: File tồn tại tại path chỉ định
+- [x] C1-2: File là valid JSON (có thể bỏ comment qua `jsonc-parser` hoặc strip)
+- [x] C1-3: Field `name` = `"ts-relay-test"`
+- [x] C1-4: Field `args` có giá trị mặc định hợp lý
+- [x] C1-5: Comment giải thích từng field (JSONC format)
 
 ```bash
 # Chỉnh config để dùng relay đơn giản (echo server test, không cần TS)
@@ -133,11 +152,11 @@ cat /tmp/ts-relay-test.jsonc
 sudo tailsacle-cli service install --file /tmp/ts-relay-test.jsonc --yes
 ```
 
-- [ ] C1-6: In log cài đặt rõ ràng (các bước: write unit → daemon-reload → enable → start → verify)
-- [ ] C1-7: Unit file tồn tại: `ls /etc/systemd/system/ts-relay-test.service`
-- [ ] C1-8: Service đang chạy: `systemctl is-active ts-relay-test` → `active`
-- [ ] C1-9: Service enabled (boot): `systemctl is-enabled ts-relay-test` → `enabled`
-- [ ] C1-10: JSON output (`--json`) có đủ: `{ installed, name, unitPath, status, pid }`
+- [x] C1-6: In log cài đặt rõ ràng (các bước: write unit → daemon-reload → enable → start → verify)
+- [x] C1-7: Unit file tồn tại: `ls /etc/systemd/system/ts-relay-test.service`
+- [x] C1-8: Service đang chạy: `systemctl is-active ts-relay-test` → `active`
+- [x] C1-9: Service enabled (boot): `systemctl is-enabled ts-relay-test` → `enabled`
+- [x] C1-10: JSON output (`--json`) có đủ: `{ installed, name, unitPath, status, pid }`
 
 ### C2. Happy path — User service (không cần sudo)
 
@@ -145,10 +164,10 @@ sudo tailsacle-cli service install --file /tmp/ts-relay-test.jsonc --yes
 tailsacle-cli service install --file /tmp/ts-relay-test.jsonc --user --yes
 ```
 
-- [ ] C2-1: Unit file tồn tại: `~/.config/systemd/user/ts-relay-test.service`
-- [ ] C2-2: Service active: `systemctl --user is-active ts-relay-test` → `active`
-- [ ] C2-3: Không yêu cầu sudo trong quá trình install
-- [ ] C2-4: Warn về `loginctl enable-linger` nếu chưa bật
+- [x] C2-1: Unit file tồn tại: `~/.config/systemd/user/ts-relay-test.service`
+- [x] C2-2: Service active: `systemctl --user is-active ts-relay-test` → `active`
+- [x] C2-3: Không yêu cầu sudo trong quá trình install
+- [x] C2-4: Warn về `loginctl enable-linger` nếu chưa bật
 
 ### C3. Status
 
@@ -157,9 +176,9 @@ tailsacle-cli service status --name ts-relay-test
 tailsacle-cli service status --name ts-relay-test --json
 ```
 
-- [ ] C3-1: Hiển thị `active`, PID, uptime
-- [ ] C3-2: `--json` trả về `{ name, status, pid, uptime, restartCount }`
-- [ ] C3-3: Nếu service không tồn tại → error rõ ràng `SERVICE_NOT_FOUND`
+- [x] C3-1: Hiển thị `active`, PID, uptime
+- [x] C3-2: `--json` trả về `{ name, status, pid, uptime, restartCount }`
+- [x] C3-3: Nếu service không tồn tại → error rõ ràng `SERVICE_NOT_FOUND`
 
 ### C4. Logs
 
@@ -169,9 +188,9 @@ tailsacle-cli service logs --name ts-relay-test --follow &
 sleep 3 && kill %1
 ```
 
-- [ ] C4-1: `--lines 50` in ra 50 dòng log gần nhất
-- [ ] C4-2: `--follow` stream real-time (journalctl -f)
-- [ ] C4-3: Ctrl+C thoát cleanly (không để process zombie)
+- [x] C4-1: `--lines 50` in ra 50 dòng log gần nhất
+- [x] C4-2: `--follow` stream real-time (journalctl -f)
+- [x] C4-3: Ctrl+C thoát cleanly (không để process zombie)
 
 ### C5. Stop / Start / Restart
 
@@ -185,10 +204,10 @@ systemctl is-active ts-relay-test  # → active
 tailsacle-cli service restart --name ts-relay-test
 ```
 
-- [ ] C5-1: Stop → `inactive`
-- [ ] C5-2: Start → `active`  
-- [ ] C5-3: Restart → service được restart, PID thay đổi
-- [ ] C5-4: Mỗi lệnh in status sau khi thực hiện
+- [x] C5-1: Stop → `inactive`
+- [x] C5-2: Start → `active`  
+- [x] C5-3: Restart → service được restart, PID thay đổi
+- [x] C5-4: Mỗi lệnh in status sau khi thực hiện
 
 ### C6. List
 
@@ -197,9 +216,9 @@ tailsacle-cli service list
 tailsacle-cli service list --json
 ```
 
-- [ ] C6-1: Liệt kê `ts-relay-test` trong danh sách
-- [ ] C6-2: Hiển thị status (active/inactive), platform, install time
-- [ ] C6-3: `--json` trả về mảng JSON
+- [x] C6-1: Liệt kê `ts-relay-test` trong danh sách
+- [x] C6-2: Hiển thị status (active/inactive), platform, install time
+- [x] C6-3: `--json` trả về mảng JSON
 
 ---
 
@@ -310,12 +329,12 @@ Chạy `service install` và capture output:
 [tailsacle-service] 2026-08-19T16:04:44+07:00  OK     Port 19999: LISTEN ✓
 ```
 
-- [ ] F1-1: Prefix `[tailsacle-service]` trên mỗi dòng
-- [ ] F1-2: Timestamp ISO 8601 local timezone
-- [ ] F1-3: Level rõ ràng: `INFO`, `OK`, `WARN`, `ERROR`
-- [ ] F1-4: Màu ANSI khi chạy trong TTY (OK=xanh lá, WARN=vàng, ERROR=đỏ)
-- [ ] F1-5: Không có màu khi pipe sang file: `tailsacle-cli service install ... 2>&1 | cat`
-- [ ] F1-6: Secrets bị mask: `TS_CLIENT_SECRET=tskey-****`
+- [x] F1-1: Prefix `[tailsacle-service]` trên mỗi dòng
+- [x] F1-2: Timestamp ISO 8601 local timezone
+- [x] F1-3: Level rõ ràng: `INFO`, `OK`, `WARN`, `ERROR`
+- [x] F1-4: Màu ANSI khi chạy trong TTY (OK=xanh lá, WARN=vàng, ERROR=đỏ)
+- [x] F1-5: Không có màu khi pipe sang file: `tailsacle-cli service install ... 2>&1 | cat`
+- [x] F1-6: Secrets bị mask: `TS_CLIENT_SECRET=tskey-****`
 
 ### F2. `--json` output format
 
@@ -337,9 +356,9 @@ Chạy `service install` và capture output:
 }
 ```
 
-- [ ] F2-1: Đúng structure envelope
-- [ ] F2-2: Không có màu ANSI trong JSON
-- [ ] F2-3: Secrets vẫn bị mask
+- [x] F2-1: Đúng structure envelope
+- [x] F2-2: Không có màu ANSI trong JSON
+- [x] F2-3: Secrets vẫn bị mask
 
 ---
 
@@ -422,17 +441,17 @@ tailsacle-cli service init --name pg-relay-svc --out /tmp/pg-relay-svc.jsonc
 sudo tailsacle-cli service install --file /tmp/pg-relay-svc.jsonc --yes
 ```
 
-- [ ] H1-1: Service chạy thành công
-- [ ] H1-2: Port 15432 đang LISTEN: `ss -tlnp | grep 15432`
-- [ ] H1-3: Port 15433 đang LISTEN: `ss -tlnp | grep 15433`
-- [ ] H1-4: `service logs --follow` in ra relay connection logs
-- [ ] H1-5: Sau `service restart` — relay tự reconnect, ports vẫn LISTEN
+- [x] H1-1: Service chạy thành công
+- [x] H1-2: Port 15432 đang LISTEN: `ss -tlnp | grep 15432`
+- [x] H1-3: Port 15433 đang LISTEN: `ss -tlnp | grep 15433`
+- [x] H1-4: `service logs --follow` in ra relay connection logs
+- [x] H1-5: Sau `service restart` — relay tự reconnect, ports vẫn LISTEN
 
 ### H2. Survive reboot
 
-- [ ] H2-1 (Linux): Sau `sudo reboot`, service tự start lại: `systemctl is-active pg-relay-svc` → `active`
-- [ ] H2-2 (Windows): Sau restart, service ở trạng thái `RUNNING` trong Services
-- [ ] H2-3: Log ghi nhận restart count > 0 sau reboot
+- [ ] H2-1 [UNTESTED-REBOOT] (Linux): Sau `sudo reboot`, service tự start lại: `systemctl is-active pg-relay-svc` → `active`
+- [ ] H2-2 [UNTESTED-REBOOT] (Windows): Sau restart, service ở trạng thái `RUNNING` trong Services
+- [ ] H2-3 [UNTESTED-REBOOT]: Log ghi nhận restart count > 0 sau reboot
 
 ---
 

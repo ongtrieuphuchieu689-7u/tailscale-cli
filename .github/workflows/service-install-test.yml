@@ -18,17 +18,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: 'npm'
+          cache: npm
 
       - name: Install dependencies & Build CLI
         run: |
           npm ci
+          npm run check
           npm run build
           npm link
 
@@ -112,18 +113,19 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: 'npm'
+          cache: npm
 
       - name: Install dependencies & Build CLI
         shell: pwsh
         run: |
           npm ci
+          npm run check
           npm run build
           npm link
 
