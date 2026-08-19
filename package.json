@@ -1,6 +1,10 @@
 {
   "name": "tailsacle-cli",
+<<<<<<< HEAD
   "version": "1.260819.11620",
+=======
+  "version": "1.260819.11604",
+>>>>>>> 58ee29c4c7b833298203e8eadbe5c9c415572402
   "private": false,
   "type": "module",
   "engines": {
