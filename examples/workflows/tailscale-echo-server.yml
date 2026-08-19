@@ -1,0 +1,121 @@
+name: Tailscale Echo Server
+
+# Starts a disposable echo HTTP server on a GitHub-hosted runner, joins the
+# tailnet and exposes the server on the tailnet via `tailsacle-cli serve`.
+# Join the tailnet from your device, then open:
+#   - http://<tailnet-ip>/            (direct tailnet IP access)
+#   - http://<hostname>.<tailnet>.ts.net/  (MagicDNS internal domain)
+# Both return the JSON description of every request sent to them.
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: "Minutes to keep the echo server reachable on the tailnet (max 360)"
+        required: false
+        default: "60"
+      tailnet_http_port:
+        description: "HTTP port exposed on the tailnet via serve (80, 8080, 8443)"
+        required: false
+        default: "80"
+      local_port:
+        description: "Local port of the echo server"
+        required: false
+        default: "8080"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tailscale-echo-server
+  cancel-in-progress: true
+
+jobs:
+  echo-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 390
+    env:
+      TS_CLIENT_SECRET: ${{ secrets.TS_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install tailsacle-cli@latest from the npm registry
+        run: |
+          npm install --global tailsacle-cli@latest
+          echo "installed cli version: $(tailsacle-cli --version)"
+          echo "npm registry latest:   $(npm view tailsacle-cli version)"
+
+      - name: Start the echo HTTP server
+        run: |
+          node examples/echo-server.mjs --port ${{ inputs.local_port }} > /tmp/echo-server.log 2>&1 &
+          echo $! > /tmp/echo-server.pid
+          for i in $(seq 1 20); do
+            if curl -fsS "http://127.0.0.1:${{ inputs.local_port }}/healthcheck" > /dev/null; then
+              echo "echo server is up on port ${{ inputs.local_port }}"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Join the tailnet (tailsacle-cli up)
+        run: tailsacle-cli up --yes --apply-policy --no-ssh --json
+
+      - name: Serve the echo server on the tailnet (tailsacle-cli serve)
+        run: |
+          tailsacle-cli serve "http://127.0.0.1:${{ inputs.local_port }}" \
+            --http ${{ inputs.tailnet_http_port }} --json
+
+      - name: Collect tailnet IP and MagicDNS name (tailsacle-cli status)
+        id: access
+        run: |
+          tailsacle-cli status --json > /tmp/tailscale-status.json
+          node - <<'NODE'
+          const fs = require("fs");
+          const raw = JSON.parse(fs.readFileSync("/tmp/tailscale-status.json", "utf8"));
+          const status = raw.resolved ?? raw;
+          const self = status.Self ?? {};
+          const ip = (self.TailscaleIPs ?? []).find((v) => v.startsWith("100."));
+          const dns = String(self.DNSName ?? "").replace(/\.$/, "");
+          const output = [`tailnet_ip=${ip ?? ""}`, `tailnet_dns=${dns ?? ""}`].join("\n");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `${output}\n`);
+          console.log("tailnet_ip:", ip ?? "(none)");
+          console.log("tailnet_dns:", dns ?? "(none)");
+          NODE
+
+      - name: Self-test through the tailnet (IP and MagicDNS)
+        env:
+          TAILNET_IP: ${{ steps.access.outputs.tailnet_ip }}
+          TAILNET_DNS: ${{ steps.access.outputs.tailnet_dns }}
+          TAILNET_HTTP_PORT: ${{ inputs.tailnet_http_port }}
+        run: |
+          echo "== via tailnet IP =="
+          curl -fsS "http://${TAILNET_IP}:${TAILNET_HTTP_PORT}/ping?from=selftest-ip"
+          echo
+          echo "== via MagicDNS internal domain =="
+          curl -fsS "http://${TAILNET_DNS}:${TAILNET_HTTP_PORT}/ping?from=selftest-dns"
+          echo
+
+      - name: Keep alive and report access info
+        env:
+          TAILNET_IP: ${{ steps.access.outputs.tailnet_ip }}
+          TAILNET_DNS: ${{ steps.access.outputs.tailnet_dns }}
+          TAILNET_HTTP_PORT: ${{ inputs.tailnet_http_port }}
+          DURATION_MINUTES: ${{ inputs.duration_minutes }}
+        run: |
+          {
+            echo "## Tailscale Echo Server — access info"
+            echo ""
+            echo "Join the tailnet from your device (the CLI prints the URL/QR), then open:"
+            echo ""
+            echo "- via tailnet IP: \`http://${TAILNET_IP}:${TAILNET_HTTP_PORT}/?hello=tailnet\`"
+            echo "- via MagicDNS:   \`http://${TAILNET_DNS}:${TAILNET_HTTP_PORT}/?hello=magicdns\`"
+            echo ""
+            echo "Every request returns a JSON echo of the request."
+            echo "The node is ephemeral (auto-removed when the job ends) and stays up ~${DURATION_MINUTES} minutes."
+          } > "$GITHUB_STEP_SUMMARY"
+          echo "Keeping the echo server alive for ${DURATION_MINUTES} minutes..."
+          sleep "$((DURATION_MINUTES * 60))"
