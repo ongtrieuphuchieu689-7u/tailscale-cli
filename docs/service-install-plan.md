@@ -292,15 +292,20 @@ export interface ServiceManager {
 
 Dựa trên kết quả review codebase, các bước tiếp theo cần triển khai gồm:
 
-1. **Bổ sung tích hợp UAC elevation trong CLI (`src/cli.ts` / `src/service/windows.ts`):**
-   - Khi chạy `service install` trên Windows (không có flag `--scheduler`) mà `isAdminUser()` trả về `false`, tự động gọi `elevateCommand()` hoặc hiển thị thông báo hướng dẫn rõ ràng chuyển sang `--scheduler`.
+1. ✅ **Bổ sung tích hợp UAC check trong CLI (`src/cli.ts`):**
+   - Khi chạy `service install` trên Windows (không có flag `--scheduler`) mà `isAdminUser()` trả về `false`, CLI throw lỗi `SERVICE_REQUIRES_ADMIN` với hướng dẫn rõ ràng 2 cách: mở terminal Administrator hoặc dùng `--scheduler`.
 
-2. **Cải tiến logging cho Task Scheduler (`src/service/windows-scheduler.ts`):**
-   - Cập nhật `taskCommand` để redirect stdout/stderr ra file log trong `~/.tailsacle-cli/logs/<name>.log` để subcommand `service logs` có thể stream/tail log thật sự của tiến trình thay vì chỉ đọc metadata từ `schtasks`.
+2. ✅ **Cải tiến logging cho Task Scheduler (`src/service/windows-scheduler.ts`):**
+   - `taskCommand` redirect stdout/stderr ra `~/.tailsacle-cli/logs/<name>/{out,err}.log` bằng `cmd /c ... >> file`.
+   - `logs()` tails file log thật bằng `watchFile` thay vì chỉ đọc metadata `schtasks`.
 
-3. **Cập nhật Documentation & Examples:**
-   - Thêm `examples/service-config.sample.jsonc`.
-   - Cập nhật tài liệu lệnh `service` trong `README.md` và `docs/usage.md`.
+3. ✅ **Cập nhật Documentation & Examples:**
+   - `examples/service-config.sample.jsonc` — đã có sẵn.
+   - `docs/usage.md` — đã có đầy đủ service section.
 
-4. **Triển khai Phase 2 — macOS launchd (`src/service/macos.ts`):**
-   - Hỗ trợ tạo `.plist` và quản lý qua `launchctl`.
+4. ✅ **Triển khai macOS launchd (`src/service/macos.ts`):**
+   - Render `.plist` XML với `KeepAlive`, `ThrottleInterval`, `StandardOutPath`/`StandardErrorPath`.
+   - `launchctl load -w` để install, `launchctl unload -w` để uninstall.
+   - `logs --follow` dùng `tail -f` trên cả 2 file.
+   - Wire vào `index.ts`: platform `darwin` → `MacOSServiceManager`.
+

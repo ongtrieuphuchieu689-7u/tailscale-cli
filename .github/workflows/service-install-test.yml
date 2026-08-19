@@ -147,15 +147,18 @@ jobs:
       - name: Update Config with Windows Test Args
         shell: pwsh
         run: |
-          node -e '
-            const fs = require("fs");
-            const content = fs.readFileSync("C:/tmp/ts-service-test/service.jsonc", "utf8")
-              .replace(/\/\/.*$/gm, "")
-              .replace(/\/\*[\s\S]*?\*\//gm, "");
-            const cfg = JSON.parse(content);
-            cfg.args = ["relay", "--listen", "18888", "--target", "127.0.0.1:19999"];
-            fs.writeFileSync("C:/tmp/ts-service-test/service.json", JSON.stringify(cfg, null, 2));
-          '
+          # Write JS to a temp file to avoid PowerShell string-quoting issues with node -e
+          $script = @'
+          const fs = require("fs");
+          const content = fs.readFileSync("C:/tmp/ts-service-test/service.jsonc", "utf8")
+            .replace(/\/\/.*$/gm, "")
+            .replace(/\/\*[\s\S]*?\*\//gm, "");
+          const cfg = JSON.parse(content);
+          cfg.args = ["relay", "--listen", "18888", "--target", "127.0.0.1:19999"];
+          fs.writeFileSync("C:/tmp/ts-service-test/service.json", JSON.stringify(cfg, null, 2));
+          '@
+          $script | Out-File -FilePath "C:\tmp\patch-cfg.cjs" -Encoding utf8
+          node "C:\tmp\patch-cfg.cjs"
 
       - name: Install Windows Service (Elevated GitHub Runner)
         shell: pwsh
@@ -211,20 +214,23 @@ jobs:
         shell: pwsh
         run: npm link
 
-      - name: Init Config for Scheduler
+      - name: Init config for scheduler
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "C:\tmp\ts-sched-test"
           tailsacle-cli service init --name win-sched-svc --out "C:\tmp\ts-sched-test\service.jsonc"
-          node -e '
-            const fs = require("fs");
-            const content = fs.readFileSync("C:/tmp/ts-sched-test/service.jsonc", "utf8")
-              .replace(/\/\/.*$/gm, "")
-              .replace(/\/\*[\s\S]*?\*\//gm, "");
-            const cfg = JSON.parse(content);
-            cfg.args = ["relay", "--listen", "18889", "--target", "127.0.0.1:19999"];
-            fs.writeFileSync("C:/tmp/ts-sched-test/service.json", JSON.stringify(cfg, null, 2));
-          '
+          # Use PowerShell here-string to avoid node -e quoting issues on Windows
+          $script = @'
+          const fs = require("fs");
+          const content = fs.readFileSync("C:/tmp/ts-sched-test/service.jsonc", "utf8")
+            .replace(/\/\/.*$/gm, "")
+            .replace(/\/\*[\s\S]*?\*\//gm, "");
+          const cfg = JSON.parse(content);
+          cfg.args = ["relay", "--listen", "18889", "--target", "127.0.0.1:19999"];
+          fs.writeFileSync("C:/tmp/ts-sched-test/service.json", JSON.stringify(cfg, null, 2));
+          '@
+          $script | Out-File -FilePath "C:\tmp\patch-sched.cjs" -Encoding utf8
+          node "C:\tmp\patch-sched.cjs"
 
       - name: Install via Task Scheduler
         shell: pwsh
@@ -247,3 +253,4 @@ jobs:
           tailsacle-cli service uninstall --name win-sched-svc --yes --json
           cmd /c 'schtasks /query /tn "tailsacle-cli\win-sched-svc" >nul 2>&1'
           if ($LASTEXITCODE -eq 0) { throw "scheduler task still exists" }
+
