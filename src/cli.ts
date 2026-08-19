@@ -37,6 +37,7 @@ import {
   daemonStatus,
   stopUserspaceDaemon,
 } from "./daemon.js";
+import { funnelPublicDnsPropagated } from "./dns.js";
 import { manifest } from "./manifest.js";
 import {
   ensureFunnelAccess,
@@ -887,47 +888,6 @@ async function funnelDnsName(
   } catch {
     return undefined;
   }
-}
-
-async function funnelPublicDnsPropagated(
-  hostname: string,
-  timeoutSeconds: number,
-): Promise<{ ok: boolean; attempts: number }> {
-  const deadline = Date.now() + timeoutSeconds * 1000;
-  let attempts = 0;
-  while (Date.now() < deadline) {
-    attempts += 1;
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 10_000);
-      const response = await fetch(
-        `https://dns.google/resolve?name=${encodeURIComponent(hostname)}&type=A`,
-        { signal: controller.signal },
-      );
-      clearTimeout(timer);
-      const json = (await response.json()) as {
-        Answer?: { type: number; data: string }[];
-      };
-      if ((json.Answer ?? []).some((record) => record.type === 1))
-        return { ok: true, attempts };
-    } catch {
-      // DNS-over-HTTPS unavailable; fall back to the system resolver next round.
-    }
-    try {
-      const { execFile } = await import("node:child_process");
-      const { promisify } = await import("node:util");
-      const { stdout } = await promisify(execFile)(
-        "getent",
-        ["ahostsv4", hostname],
-        { timeout: 5000 },
-      );
-      if (stdout.trim()) return { ok: true, attempts };
-    } catch {
-      // no getent or hostname not resolvable yet.
-    }
-    await sleepMs(10_000);
-  }
-  return { ok: false, attempts };
 }
 
 interface FunnelOptions {

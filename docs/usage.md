@@ -47,7 +47,7 @@ Policy writes require a fetched remote policy, diff, remote validation, local ba
 
 ## Funnel and DNS
 
-- `funnel` refuses ephemeral nodes (they never publish public DNS), auto-detects the target from `$PORT`, supports `--tcp <public:local>` and repeatable `--expose 443=3000 --expose 443/api=3001`, and verifies the public A record (dns.google + getent) **and the live endpoint** up to `--verify-timeout` (default 120s) before reporting the public URL: HTTPS funnels are probed with a TLS handshake + HTTP request per public port (`tlsVerified`/`tlsVerifiedPorts`), TCP funnels with a raw TCP connect (`tcpVerified`). DNS alone is never reported as success; an unreachable endpoint fails with `FUNNEL_ENDPOINT_UNREACHABLE`.
+- `funnel` refuses ephemeral nodes (they never publish public DNS), auto-detects the target from `$PORT`, supports `--tcp <public:local>` and repeatable `--expose 443=3000 --expose 443/api=3001`, and verifies the public A record (dns.google + cloudflare-dns.com + getent) **and the live endpoint** up to `--verify-timeout` (default 120s) before reporting the public URL: HTTPS funnels are probed with a TLS handshake + HTTP request per public port (`tlsVerified`/`tlsVerifiedPorts`), TCP funnels with a raw TCP connect (`tcpVerified`). DNS alone is never reported as success; an unreachable endpoint fails with `FUNNEL_ENDPOINT_UNREACHABLE`.
 - `dns --enable-magicdns --yes` enables MagicDNS on the tailnet; `dns --enable-magicdns --dry-run` previews the action without applying; plain `dns` reads nameservers/preferences/search paths.
 - Custom `TS_TAILNET` domains (not `*.ts.net`) emit a warning because Funnel DNS and HTTPS rely on a Tailscale-hosted domain.
 
