@@ -33,6 +33,10 @@ máy ảo…).
 | `tailsacle-cli relay --listen <port> --target <host:port>` | Chạy trạm trung chuyển TCP/HTTP relay proxy, forward trực tiếp traffic sang host/port khác | tcp-relay, relay-matrix |
 | `tailsacle-cli relay --target-host <host> --map 5432:5432 --map 5433:5433` | Chạy trạm trung chuyển chuyển tiếp cùng lúc nhiều cổng trong 1 tiến trình duy nhất | multi-port relay |
 | `tailsacle-cli relay --file examples/relays.sample.jsonc` | Chạy trạm trung chuyển đọc toàn bộ danh sách service và mapping từ file cấu hình | service / daemon |
+| `tailsacle-cli service init --name <name> --out <file>` | Sinh file cấu hình service mẫu (JSONC) | service-install-test |
+| `tailsacle-cli service install --file <config> --user --yes` | Cài service systemd **user** (rootless, không sudo) | service-install-test |
+| `tailsacle-cli service install --file <config> --yes` | Cài service systemd **system** (sudo) hoặc Windows SCM (admin); `--scheduler` = Task Scheduler không cần admin | service-install-test |
+| `tailsacle-cli service status \| logs \| start \| stop \| restart \| list \| uninstall` | Quản lý vòng đời service | service-install-test |
 | `tailsacle-cli serve "http://127.0.0.1:8080" --http 80 --json` | Expose HTTP qua Serve — **route theo Host header**, truy cập bằng MagicDNS name (`http://<hostname>.<tailnet>.ts.net/`) | echo-server |
 | `tailsacle-cli serve "tcp://127.0.0.1:8080" --tcp 8080 --json` | TCP forwarder raw — không cần Host matching, **truy cập bằng IP trực tiếp** (`http://<100.x.x.x>:8080/` hoặc `psql -h <100.x.x.x>`) | echo-server + postgres + relay |
 | `tailsacle-cli funnel --tcp 10000:<local_port> --yes` | Expose cổng TCP công khai ra Internet thông qua Funnel | relay-matrix |

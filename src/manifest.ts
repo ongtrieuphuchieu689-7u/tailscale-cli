@@ -398,6 +398,43 @@ export const manifest = {
       confirmation: "never (explicit command)",
     },
     {
+      name: "service",
+      summary:
+        "Install, manage and remove a relay/script as a background service: systemd (Linux system/user unit), Windows SCM (WinSW via node-windows), or Windows Task Scheduler (--scheduler, no admin).",
+      command: [
+        "service",
+        "<init|install|uninstall|status|logs|start|stop|restart|list>",
+        ["init --name <name> --out <file>"],
+        ["install --file <config> [--user] [--scheduler] [--yes]"],
+        ["uninstall --name <name> [--yes]"],
+        ["status --name <name>"],
+        ["logs --name <name> [--lines <n>] [--follow]"],
+        ["start|stop|restart --name <name>"],
+        ["list"],
+      ],
+      consumes: {
+        inputs: [
+          "service config file (.tailsacle-service.jsonc, JSONC supported)",
+          "node-windows (optional, Windows SCM path only)",
+        ],
+      },
+      outputs: {
+        json: "resolved per subcommand: init { file, name }; install { installed, name, platform, scope, unitPath, status, pid, portsListening }; status { name, status, pid?, uptimeSeconds?, restartCount? }; list ServiceInfo[]",
+      },
+      scopes: ["none"],
+      privileges: [
+        "root/sudo for Linux system units (--user avoids sudo)",
+        "Administrator for Windows SCM (--scheduler avoids admin)",
+      ],
+      sideEffects: [
+        "write systemd unit or Windows service/task definition",
+        "enable and start the service",
+        "remove service definition on uninstall",
+      ],
+      retryable: false,
+      confirmation: "--yes or TTY for install/uninstall",
+    },
+    {
       name: "agent-manifest",
       summary: "Emit this versioned contract.",
       command: ["agent-manifest", ["--json"]],

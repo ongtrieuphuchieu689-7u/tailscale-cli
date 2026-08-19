@@ -61,6 +61,37 @@ Policy writes require a fetched remote policy, diff, remote validation, local ba
 - When running as root, the daemon is started directly; otherwise a `sudo` invocation is attempted with a clear warning when it fails.
 - The pidfile is only written when the CLI itself spawns the daemon; existing tailscaled instances started by systemd or manual commands are not tracked.
 
+## Service management (`service`)
+
+Runs a relay (or any Node script) as a background service: **systemd** on Linux (system unit with `sudo`, or rootless `--user` unit) and **Windows SCM** (WinSW via `node-windows`) or **Windows Task Scheduler** (`--scheduler`, no admin required).
+
+```bash
+# 1. Generate a sample config (JSONC with comments)
+tailsacle-cli service init --name tailsacle-relay --out .tailsacle-service.jsonc
+
+# 2. Edit args/env/restart, then install:
+#    Linux system service (sudo) | rootless user service | Windows SCM | Task Scheduler
+sudo tailsacle-cli service install --file .tailsacle-service.jsonc --yes
+tailsacle-cli service install --file .tailsacle-service.jsonc --user --yes   # Linux rootless
+tailsacle-cli service install --file .tailsacle-service.jsonc --yes           # Windows (admin)
+tailsacle-cli service install --file .tailsacle-service.jsonc --scheduler --yes  # Windows, no admin
+
+# 3. Manage
+tailsacle-cli service status --name tailsacle-relay --json
+tailsacle-cli service logs --name tailsacle-relay --follow
+tailsacle-cli service start|stop|restart --name tailsacle-relay
+tailsacle-cli service list
+tailsacle-cli service uninstall --name tailsacle-relay --yes
+```
+
+Notes:
+
+- Config is JSON/JSONC (comments + trailing commas supported). `args` example: `["relay", "--file", "./relays.jsonc"]` for multi-port relay daemons.
+- Linux `--user` services need `loginctl enable-linger <user>` to auto-start on boot — the CLI warns when it is missing.
+- Linux system services require root (`SERVICE_REQUIRES_ADMIN`); Windows SCM requires an elevated terminal (Administrator). `--scheduler` on Windows needs no admin but only starts after login (Task Scheduler, weaker crash-restart than SCM).
+- Env values that look like secrets (`tskey-`, `secret`, `token`, `password`, `api_key`, `credential`) are masked as `****` in logs.
+- Errors: `SERVICE_NAME_INVALID`, `SERVICE_CONFIG_MISSING_FIELD`, `SERVICE_WORKDIR_NOT_FOUND`, `SERVICE_SCRIPT_NOT_FOUND`, `SERVICE_CONFIG_NOT_FOUND`, `SERVICE_ALREADY_EXISTS`, `SERVICE_NOT_FOUND`, `SERVICE_PLATFORM_UNSUPPORTED`, `SERVICE_SYSTEMCTL_FAILED`, `SERVICE_WINDOWS_NATIVE_REQUIRED`, `SERVICE_CONFIRMATION_REQUIRED`.
+
 ## Automation
 
 Pass `--json` to commands that support stable JSON output. Every envelope carries `ok`, `command`, `durationMs`, `resolved`, `warnings`, `requiredPrivileges`, `sideEffects`, `retryable` and `error`. Errors include a `docsUrl` linking to relevant documentation. The `status --show-resolution` flag includes credential source and masked value in the resolved output. The versioned `agent-manifest` contract (`manifestVersion: 2`) describes per-tool inputs/outputs, scopes, privileges, side effects, retryability, confirmation requirements and warning codes. Exit codes: `1` general, `3` credential, `4` permission/scope, `5` binary, `6` local Tailscale, `7` funnel/DNS, `8` policy, `9` privilege, `75` retryable. Secrets are masked and server error text is scrubbed (`tskey-…`, `Authorization`) before surfacing.

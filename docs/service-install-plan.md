@@ -1,9 +1,9 @@
 # Kế hoạch: Tích hợp `service` command — Cài đặt System Service trên Windows & Linux
 
-> **Trạng thái:** Draft — chưa triển khai  
-> **Phiên bản kế hoạch:** 2026-08-19 (v1) → **2026-08-19 (v2, đã review)**  
+> **Trạng thái:** ✅ **Đã triển khai (Phase 1 + Phase 2 core)** — 2026-08-19, xem [service-install-verification.md](./service-install-verification.md)  
+> **Phiên bản kế hoạch:** 2026-08-19 (v1) → **2026-08-19 (v2, đã review)** → **2026-08-19 (v3, đã triển khai)**  
 > **Tác giả:** Thiết kế bởi Antigravity  
-> **Ghi chú review v2:** Sửa 4 điểm sau khi kiểm chứng thực tế: (1) làm rõ "user service không cần admin" chỉ áp dụng Linux; (2) sửa sai kỹ thuật — `node-windows.svc.install()` **không** tự bật UAC prompt, cần check `isAdminUser()` + elevate chủ động; (3) thống nhất bản WinSW giữa 2 phương án (node-windows dùng bản .NET Framework cũ, không phải v3); (4) đưa Windows Task Scheduler (`--scheduler`, không cần admin) từ Phase 3 lên Phase 1 làm fallback thật sự cho SCM.
+> **Ghi chú review v3 (sau khi code):** hệ thống đã code theo đúng thiết kế v2: `src/service/*` (types/config/registry/linux/windows/windows-scheduler/index), CLI `service` 9 subcommands, JSONC config qua `parseHuJson`, registry `~/.tailsacle-cli/services.json`, systemd system/user unit (bỏ `User=` khi user scope — systemd error 216), WinSW XML + `node-windows` dynamic import (optionalDependency), Task Scheduler qua `schtasks` (`--scheduler`), check `loginctl enable-linger`, port detection từ `--listen/--map/--file` (qua `/proc/net/tcp`), poll status + port sau install, secret env mask `****`, rollback unit file khi enable fail. Unit tests B1–B5 + CI workflow `service-install-test.yml` (Linux user service + Windows SCM). macOS launchd để Phase 2 (chưa làm).
 
 ---
 

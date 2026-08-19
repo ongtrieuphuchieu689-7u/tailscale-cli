@@ -161,6 +161,25 @@ Ví dụ file `relays.json`:
 
 Funnel ports are validated before execution; supported public HTTPS ports are 443, 8443 and 10000.
 
+### Service management (`service` — chạy relay như systemd / Windows service)
+
+```bash
+# Sinh file cấu hình mẫu, chỉnh sửa rồi cài đặt:
+npx tailsacle-cli service init --name tailsacle-relay --out .tailsacle-service.jsonc
+sudo npx tailsacle-cli service install --file .tailsacle-service.jsonc --yes   # Linux systemd
+npx tailsacle-cli service install --file .tailsacle-service.jsonc --user --yes  # Linux rootless
+npx tailsacle-cli service install --file .tailsacle-service.jsonc --yes         # Windows SCM (admin)
+npx tailsacle-cli service install --file .tailsacle-service.jsonc --scheduler --yes  # Windows Task Scheduler (no admin)
+
+npx tailsacle-cli service status --name tailsacle-relay --json
+npx tailsacle-cli service logs --name tailsacle-relay --follow
+npx tailsacle-cli service start|stop|restart --name tailsacle-relay
+npx tailsacle-cli service list
+npx tailsacle-cli service uninstall --name tailsacle-relay --yes
+```
+
+Ví dụ `args` chạy relay multi-port dưới dạng daemon: `["relay", "--file", "/etc/tailsacle/relays.json"]`. Xem `docs/service-install-plan.md` (thiết kế) và `docs/service-install-verification.md` (kiểm chứng).
+
 With `--yes`, `funnel` and `deploy` auto-provision what the tailnet is missing (tagged auth keys, `tagOwners`, the `funnel` node attribute, and tailnet HTTPS certificates) with warnings, so a trust credential can reach a working connection end to end.
 
 ## Policy
