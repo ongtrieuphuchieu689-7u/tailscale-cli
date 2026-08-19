@@ -90,7 +90,17 @@ export class WindowsSchedulerManager implements ServiceManager {
     if (!info) {
       throw new Error(`SERVICE_NOT_FOUND: service "${name}" is not registered`);
     }
-    schtasks(["/delete", "/tn", taskPathFor(name), "/f"], true);
+    schtasks(["/end", "/tn", taskPathFor(name)], true);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      schtasks(["/delete", "/tn", taskPathFor(name), "/f"], true);
+      if (!taskExists(name)) break;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    if (taskExists(name)) {
+      throw new Error(
+        `SERVICE_SCHTASKS_FAILED: could not delete scheduled task "${taskPathFor(name)}"`,
+      );
+    }
     await registryRemove(name);
   }
 

@@ -162,6 +162,18 @@ function runWinSw(
   }
 }
 
+async function removeDirRetry(dir: string, attempts = 5): Promise<void> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (attempt === attempts - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
+
 export function parseScStatus(name: string, output: string): ServiceStatus {
   if (!output) return { name, status: "unknown" };
   const stateMatch = /STATE\s*:\s*\d+\s+(\w+)/.exec(output);
@@ -241,7 +253,7 @@ export class WindowsServiceManager implements ServiceManager {
         true,
       );
     }
-    rmSync(serviceDir, { recursive: true, force: true });
+    await removeDirRetry(serviceDir);
     await registryRemove(name);
   }
 
