@@ -31,6 +31,8 @@ máy ảo…).
 |---|---|---|
 | `tailsacle-cli up --yes --apply-policy --no-ssh --json` | Join tailnet: tạo auth key qua OAuth trust credential (`TS_CLIENT_SECRET`), chạy `tailscale up`, tự cấp `tagOwners`/`nodeAttrs` nếu thiếu | tất cả workflow |
 | `tailsacle-cli relay --listen <port> --target <host:port>` | Chạy trạm trung chuyển TCP/HTTP relay proxy, forward trực tiếp traffic sang host/port khác | tcp-relay, relay-matrix |
+| `tailsacle-cli relay --target-host <host> --map 5432:5432 --map 5433:5433` | Chạy trạm trung chuyển chuyển tiếp cùng lúc nhiều cổng trong 1 tiến trình duy nhất | multi-port relay |
+| `tailsacle-cli relay --file examples/relays.sample.jsonc` | Chạy trạm trung chuyển đọc toàn bộ danh sách service và mapping từ file cấu hình | service / daemon |
 | `tailsacle-cli serve "http://127.0.0.1:8080" --http 80 --json` | Expose HTTP qua Serve — **route theo Host header**, truy cập bằng MagicDNS name (`http://<hostname>.<tailnet>.ts.net/`) | echo-server |
 | `tailsacle-cli serve "tcp://127.0.0.1:8080" --tcp 8080 --json` | TCP forwarder raw — không cần Host matching, **truy cập bằng IP trực tiếp** (`http://<100.x.x.x>:8080/` hoặc `psql -h <100.x.x.x>`) | echo-server + postgres + relay |
 | `tailsacle-cli funnel --tcp 10000:<local_port> --yes` | Expose cổng TCP công khai ra Internet thông qua Funnel | relay-matrix |
@@ -41,6 +43,7 @@ Các lệnh khác (dùng trong trường hợp mở rộng, xem [docs/usage.md](
 | Lệnh | Tình huống |
 |---|---|
 | `tailsacle-cli relay -l 5432 -t 100.x.y.z:5432 --serve` | Chạy relay chuyển tiếp Postgres sang máy khác và tự động bật Serve trong tailnet |
+| `tailsacle-cli relay --file ./relays.json` | Khởi chạy service trạm trung chuyển nhiều port từ file JSON |
 | `tailsacle-cli funnel <target> --json` | Public HTTPS/TCP ra internet (Funnel) — verify public DNS + TLS thật trước khi báo URL |
 | `tailsacle-cli dns --enable-magicdns --yes` | Bật MagicDNS cho tailnet |
 | `tailsacle-cli policy --file policy.hujson --apply --yes` | Đồng bộ ACL policy có bảo vệ (diff → validate → backup → ETag) |

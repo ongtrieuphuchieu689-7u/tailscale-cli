@@ -277,18 +277,23 @@ export const manifest = {
     {
       name: "relay",
       summary:
-        "Run a TCP relay proxy to forward connections to another machine, optionally exposing via Serve/Funnel.",
+        "Run a TCP relay proxy to forward connections to another machine (single or multi-port, or via config file), optionally exposing via Serve/Funnel.",
       command: [
         "relay",
-        "-l, --listen <port>",
-        "-t, --target <host:port>",
+        ["-l, --listen <port>"],
+        ["-t, --target <host:port>"],
+        ["-m, --map <mapping...>"],
+        ["-f, --file <configPath>"],
         ["--host <address>"],
+        ["--target-host <address>"],
         ["--serve"],
         ["--funnel"],
       ],
-      consumes: { inputs: ["listen port", "target host:port"] },
+      consumes: {
+        inputs: ["listen/target port", "mapping array", "JSON config file"],
+      },
       outputs: {
-        json: "resolved { status, listenPort, listenHost, targetHost, targetPort, tailscaleServe, tailscaleFunnel }",
+        json: "resolved { status, count, mappings, tailscaleServe, tailscaleFunnel }",
       },
       scopes: ["none"],
       privileges: ["none (or tailscaled running if --serve/--funnel)"],

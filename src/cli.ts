@@ -1270,112 +1270,179 @@ program
     },
   );
 
-import { startRelay } from "./relay.js";
+import {
+  startRelay,
+  startMultiRelay,
+  parseRelayMapping,
+  loadRelayConfigFile,
+  type RelayMapping,
+} from "./relay.js";
 
 program
   .command("relay")
   .description(
-    "Run a TCP relay proxy to forward connections to another machine",
+    "Run a TCP relay proxy to forward connections to another machine (single or multi-port, or via config file)",
   )
-  .requiredOption("-l, --listen <port>", "local listen port (e.g. 5432)")
-  .requiredOption(
+  .option("-l, --listen <port>", "local listen port (e.g. 5432)")
+  .option(
     "-t, --target <host:port>",
     "target machine host:port (e.g. 100.x.y.z:5432 or other-host:5432)",
   )
-  .option("--host <address>", "listen host (default: 0.0.0.0)", "0.0.0.0")
+  .option(
+    "-m, --map <mapping...>",
+    "repeatable port mappings, e.g. '5432:5433', '5432:192.168.50.79:5433', or '0.0.0.0:5432:host:5433'",
+  )
+  .option(
+    "-f, --file <configPath>",
+    "path to JSON configuration file defining array of relay mappings",
+  )
+  .option(
+    "--host <address>",
+    "default listen host (default: 0.0.0.0)",
+    "0.0.0.0",
+  )
+  .option(
+    "--target-host <address>",
+    "default target host when using simple listen:targetPort mappings",
+    "127.0.0.1",
+  )
   .option(
     "--serve",
-    "also configure tailscale serve for this port in the tailnet",
+    "also configure tailscale serve for all relay ports in the tailnet",
   )
   .option(
     "--funnel",
-    "also configure tailscale funnel for this port publicly (requires --serve)",
+    "also configure tailscale funnel for all relay ports publicly (requires --serve)",
   )
   .action(
     async (options: {
-      listen: string;
-      target: string;
+      listen?: string;
+      target?: string;
+      map?: string[];
+      file?: string;
       host?: string;
+      targetHost?: string;
       serve?: boolean;
       funnel?: boolean;
     }) => {
       const start = performance.now();
       try {
-        const listenPort = Number(options.listen);
-        if (
-          !Number.isFinite(listenPort) ||
-          listenPort <= 0 ||
-          listenPort > 65535
-        ) {
+        const mappings: RelayMapping[] = [];
+
+        // 1. From config file
+        if (options.file) {
+          mappings.push(...loadRelayConfigFile(options.file));
+        }
+
+        // 2. From --map flags
+        if (options.map && options.map.length > 0) {
+          for (const m of options.map) {
+            mappings.push(
+              parseRelayMapping(m, options.targetHost ?? "127.0.0.1"),
+            );
+          }
+        }
+
+        // 3. From individual --listen & --target
+        if (options.listen && options.target) {
+          const listenPort = Number(options.listen);
+          if (
+            !Number.isFinite(listenPort) ||
+            listenPort <= 0 ||
+            listenPort > 65535
+          ) {
+            throw new Error(
+              `RELAY_PORT_INVALID: --listen must be a valid port number (1-65535), got ${options.listen}`,
+            );
+          }
+
+          const targetParts = options.target.split(":");
+          if (targetParts.length !== 2) {
+            throw new Error(
+              `RELAY_TARGET_INVALID: --target must be format host:port, got ${options.target}`,
+            );
+          }
+          const targetHost = targetParts[0]!.trim();
+          const targetPort = Number(targetParts[1]!.trim());
+          if (
+            !targetHost ||
+            !Number.isFinite(targetPort) ||
+            targetPort <= 0 ||
+            targetPort > 65535
+          ) {
+            throw new Error(
+              `RELAY_TARGET_INVALID: invalid host or port in --target ${options.target}`,
+            );
+          }
+          mappings.push({
+            listenPort,
+            targetHost,
+            targetPort,
+            listenHost: options.host,
+            serve: options.serve,
+            funnel: options.funnel,
+          });
+        }
+
+        if (mappings.length === 0) {
           throw new Error(
-            `RELAY_PORT_INVALID: --listen must be a valid port number (1-65535), got ${options.listen}`,
+            "RELAY_SPEC_REQUIRED: specify --listen & --target, or --map <port:port>, or --file <config.json>",
           );
         }
 
-        const targetParts = options.target.split(":");
-        if (targetParts.length !== 2) {
-          throw new Error(
-            `RELAY_TARGET_INVALID: --target must be format host:port, got ${options.target}`,
-          );
-        }
-        const targetHost = targetParts[0]!.trim();
-        const targetPort = Number(targetParts[1]!.trim());
-        if (
-          !targetHost ||
-          !Number.isFinite(targetPort) ||
-          targetPort <= 0 ||
-          targetPort > 65535
-        ) {
-          throw new Error(
-            `RELAY_TARGET_INVALID: invalid host or port in --target ${options.target}`,
-          );
-        }
+        const actions: string[] = [];
 
-        const relay = await startRelay({
-          listenPort,
-          targetHost,
-          targetPort,
-          listenHost: options.host ?? "0.0.0.0",
-          onConnection: (addr) => {
+        const multiRelay = await startMultiRelay(mappings, {
+          onConnection: (mapping, addr) => {
             if (!program.opts<{ json?: boolean }>().json) {
               console.error(
-                `[relay] Connection from ${addr} -> forwarding to ${targetHost}:${targetPort}`,
+                `[relay :${mapping.listenPort}] Connection from ${addr} -> forwarding to ${mapping.targetHost}:${mapping.targetPort}`,
               );
             }
           },
-          onError: (err) => {
+          onError: (mapping, err) => {
             if (!program.opts<{ json?: boolean }>().json) {
-              console.error(`[relay] Error: ${err.message}`);
+              console.error(
+                `[relay :${mapping.listenPort}] Error: ${err.message}`,
+              );
             }
           },
         });
 
-        const actions = [
-          `TCP relay listening on ${options.host ?? "0.0.0.0"}:${listenPort} -> ${targetHost}:${targetPort}`,
-        ];
+        for (const m of mappings) {
+          actions.push(
+            `TCP relay listening on ${m.listenHost ?? options.host ?? "0.0.0.0"}:${m.listenPort} -> ${m.targetHost}:${m.targetPort}`,
+          );
+        }
 
-        if (options.serve || options.funnel) {
+        // Tailscale Serve / Funnel integration
+        const wantsServe = options.serve || mappings.some((m) => m.serve);
+        const wantsFunnel = options.funnel || mappings.some((m) => m.funnel);
+
+        if (wantsServe || wantsFunnel) {
           const local = new TailscaleLocal(await findTailscale());
-          if (options.serve) {
-            await local.serve([
-              "--bg",
-              "--yes",
-              `--tcp=${listenPort}`,
-              `tcp://127.0.0.1:${listenPort}`,
-            ]);
-            actions.push(
-              `configured Tailscale Serve on TCP port ${listenPort}`,
-            );
-          }
-          if (options.funnel) {
-            await local.funnel([
-              "--bg",
-              `--tcp=${listenPort}`,
-              `tcp://127.0.0.1:${listenPort}`,
-            ]);
-            actions.push(
-              `configured Tailscale Funnel on TCP port ${listenPort}`,
-            );
+          for (const m of mappings) {
+            if (options.serve || m.serve) {
+              await local.serve([
+                "--bg",
+                "--yes",
+                `--tcp=${m.listenPort}`,
+                `tcp://127.0.0.1:${m.listenPort}`,
+              ]);
+              actions.push(
+                `configured Tailscale Serve on TCP port ${m.listenPort}`,
+              );
+            }
+            if (options.funnel || m.funnel) {
+              await local.funnel([
+                "--bg",
+                `--tcp=${m.listenPort}`,
+                `tcp://127.0.0.1:${m.listenPort}`,
+              ]);
+              actions.push(
+                `configured Tailscale Funnel on TCP port ${m.listenPort}`,
+              );
+            }
           }
         }
 
@@ -1383,12 +1450,10 @@ program
           "relay",
           {
             status: "running",
-            listenPort,
-            listenHost: options.host ?? "0.0.0.0",
-            targetHost,
-            targetPort,
-            tailscaleServe: Boolean(options.serve),
-            tailscaleFunnel: Boolean(options.funnel),
+            count: mappings.length,
+            mappings,
+            tailscaleServe: Boolean(wantsServe),
+            tailscaleFunnel: Boolean(wantsFunnel),
           },
           [],
           actions,
@@ -1399,10 +1464,10 @@ program
         // Keep process alive for relay unless interrupted
         await new Promise<void>((resolve) => {
           process.on("SIGINT", () => {
-            void relay.close().then(() => resolve());
+            void multiRelay.close().then(() => resolve());
           });
           process.on("SIGTERM", () => {
-            void relay.close().then(() => resolve());
+            void multiRelay.close().then(() => resolve());
           });
         });
       } catch (error) {

@@ -1,0 +1,28 @@
+// Cấu hình mẫu cho trạm trung chuyển Tailscale TCP Relay
+// Chạy bằng lệnh: tailsacle-cli relay --file examples/relays.sample.jsonc
+[
+  // 1. Chuyển tiếp PostgreSQL Instance 1 (Port 5432) vào mạng Tailnet
+  {
+    "listen": 5432,
+    "target": "192.168.50.79:5432",
+    "serve": true
+  },
+  // 2. Chuyển tiếp PostgreSQL Instance 2 (Port 5433) vào mạng Tailnet
+  {
+    "listen": 5433,
+    "target": "192.168.50.79:5433",
+    "serve": true
+  },
+  // 3. Chuyển tiếp PostgreSQL Instance 3 (Port 5434) vào mạng Tailnet
+  {
+    "listen": 5434,
+    "target": "192.168.50.79:5434",
+    "serve": true
+  },
+  // 4. Expose cổng công khai ra Internet (Funnel TCP 10000 -> 192.168.50.79:5433)
+  {
+    "listen": 10000,
+    "target": "192.168.50.79:5433",
+    "funnel": true
+  }
+]

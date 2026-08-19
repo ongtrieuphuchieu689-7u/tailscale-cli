@@ -137,14 +137,26 @@ Forward port từ máy này sang máy khác qua tailnet:
 npx tailsacle-cli serve --tcp 5432 tcp://100.x.y.z:5432
 ```
 
-**Phương án 2 — Node.js TCP Relay (Trạm trung chuyển):**
+**Phương án 2 — Node.js TCP Relay (Trạm trung chuyển đơn cổng, đa cổng & config file):**
 Chạy trạm trung chuyển chuyển tiếp TCP traffic sang máy khác (có thể mở rộng kèm `--serve` hoặc `--funnel`):
 ```bash
-# Relay local port 5432 -> target machine 100.x.y.z:5432
-npx tailsacle-cli relay --listen 5432 --target 100.x.y.z:5432
+# 1. Đơn cổng: Relay local port 5432 -> target machine 192.168.50.79:5433
+npx tailsacle-cli relay --listen 5432 --target 192.168.50.79:5433
 
-# Relay + tự động cấu hình Tailscale Serve trong tailnet:
-npx tailsacle-cli relay --listen 5432 --target 100.x.y.z:5432 --serve
+# 2. Đa cổng (Multi-port) trong 1 tiến trình:
+npx tailsacle-cli relay --target-host 192.168.50.79 --map 5432:5432 --map 5433:5433 --map 5434:5434 --serve
+
+# 3. Chạy qua file cấu hình JSON/JSONC (phù hợp chạy Service/Daemon):
+npx tailsacle-cli relay --file ./relays.json
+```
+
+Ví dụ file `relays.json`:
+```json
+[
+  { "listen": 5432, "target": "192.168.50.79:5432", "serve": true },
+  { "listen": 5433, "target": "192.168.50.79:5433", "serve": true },
+  { "listen": 10000, "target": "192.168.50.79:5433", "funnel": true }
+]
 ```
 
 Funnel ports are validated before execution; supported public HTTPS ports are 443, 8443 and 10000.
