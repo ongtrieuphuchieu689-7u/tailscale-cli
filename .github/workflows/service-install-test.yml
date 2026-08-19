@@ -1,0 +1,177 @@
+name: Service Install & Daemon Verification Matrix
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/service/**'
+      - 'docs/service-install-plan.md'
+      - 'docs/service-install-verification.md'
+      - '.github/workflows/service-install-test.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test-linux-service:
+    name: Linux systemd Service Test (Rootless & System)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies & Build CLI
+        run: |
+          npm ci
+          npm run build
+          npm link
+
+      - name: Test Service Init (Sample Config Generation)
+        run: |
+          mkdir -p /tmp/ts-service-test
+          tailsacle-cli service init --name test-relay-service --out /tmp/ts-service-test/service.jsonc
+          test -f /tmp/ts-service-test/service.jsonc
+          cat /tmp/ts-service-test/service.jsonc
+
+      - name: Create Test Target Echo Server
+        run: |
+          node -e '
+            const net = require("net");
+            const server = net.createServer((sock) => sock.pipe(sock));
+            server.listen(19999, "127.0.0.1", () => console.log("Target echo server ready on 19999"));
+          ' &
+          sleep 2
+
+      - name: Update Config with Real Test Arguments
+        run: |
+          node -e '
+            const fs = require("fs");
+            const content = fs.readFileSync("/tmp/ts-service-test/service.jsonc", "utf8")
+              .replace(/\/\/.*$/gm, "")
+              .replace(/\/\*[\s\S]*?\*\//gm, "");
+            const cfg = JSON.parse(content);
+            cfg.args = ["relay", "--listen", "18888", "--target", "127.0.0.1:19999"];
+            fs.writeFileSync("/tmp/ts-service-test/service.json", JSON.stringify(cfg, null, 2));
+          '
+
+      - name: Install User Service (systemd rootless)
+        run: |
+          tailsacle-cli service install --file /tmp/ts-service-test/service.json --user --yes --json
+
+      - name: Check Service Status
+        run: |
+          tailsacle-cli service status --name test-relay-service --json
+          systemctl --user is-active test-relay-service
+
+      - name: Verify TCP Traffic Flow through Service
+        run: |
+          node -e '
+            const net = require("net");
+            const client = net.connect(18888, "127.0.0.1", () => {
+              client.write("HELLO_FROM_SERVICE_TEST\n");
+            });
+            client.on("data", (d) => {
+              console.log("Received via Service Relay:", d.toString());
+              if (d.toString().includes("HELLO_FROM_SERVICE_TEST")) {
+                console.log("VERIFICATION_SUCCESSFUL");
+                process.exit(0);
+              }
+            });
+            setTimeout(() => { console.error("Timeout waiting for relay"); process.exit(1); }, 5000);
+          '
+
+      - name: Check Service Logs
+        run: |
+          tailsacle-cli service logs --name test-relay-service --lines 30
+
+      - name: Restart Service
+        run: |
+          tailsacle-cli service restart --name test-relay-service
+          sleep 2
+          systemctl --user is-active test-relay-service
+
+      - name: Stop Service
+        run: |
+          tailsacle-cli service stop --name test-relay-service
+          sleep 2
+          ! systemctl --user is-active test-relay-service
+
+      - name: Uninstall Service Cleanly
+        run: |
+          tailsacle-cli service uninstall --name test-relay-service --yes --json
+          test ! -f ~/.config/systemd/user/test-relay-service.service
+
+  test-windows-service:
+    name: Windows SCM Service Test (WinSW / node-windows)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies & Build CLI
+        shell: pwsh
+        run: |
+          npm ci
+          npm run build
+          npm link
+
+      - name: Test Service Init
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "C:\tmp\ts-service-test"
+          tailsacle-cli service init --name win-relay-svc --out "C:\tmp\ts-service-test\service.jsonc"
+          Get-Content "C:\tmp\ts-service-test\service.jsonc"
+
+      - name: Update Config with Windows Test Args
+        shell: pwsh
+        run: |
+          node -e '
+            const fs = require("fs");
+            const content = fs.readFileSync("C:/tmp/ts-service-test/service.jsonc", "utf8")
+              .replace(/\/\/.*$/gm, "")
+              .replace(/\/\*[\s\S]*?\*\//gm, "");
+            const cfg = JSON.parse(content);
+            cfg.args = ["relay", "--listen", "18888", "--target", "127.0.0.1:19999"];
+            fs.writeFileSync("C:/tmp/ts-service-test/service.json", JSON.stringify(cfg, null, 2));
+          '
+
+      - name: Install Windows Service (Elevated GitHub Runner)
+        shell: pwsh
+        run: |
+          tailsacle-cli service install --file "C:\tmp\ts-service-test\service.json" --yes --json
+
+      - name: Verify SCM State
+        shell: pwsh
+        run: |
+          tailsacle-cli service status --name win-relay-svc --json
+          sc.exe query win-relay-svc
+
+      - name: Check Service Logs
+        shell: pwsh
+        run: |
+          tailsacle-cli service logs --name win-relay-svc --lines 30
+
+      - name: Stop, Start, Restart Cycle
+        shell: pwsh
+        run: |
+          tailsacle-cli service stop --name win-relay-svc
+          sc.exe query win-relay-svc
+          tailsacle-cli service start --name win-relay-svc
+          sc.exe query win-relay-svc
+
+      - name: Clean Uninstall
+        shell: pwsh
+        run: |
+          tailsacle-cli service uninstall --name win-relay-svc --yes --json

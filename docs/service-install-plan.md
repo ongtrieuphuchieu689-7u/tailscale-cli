@@ -1,8 +1,9 @@
 # Kế hoạch: Tích hợp `service` command — Cài đặt System Service trên Windows & Linux
 
 > **Trạng thái:** Draft — chưa triển khai  
-> **Phiên bản kế hoạch:** 2026-08-19  
-> **Tác giả:** Thiết kế bởi Antigravity
+> **Phiên bản kế hoạch:** 2026-08-19 (v1) → **2026-08-19 (v2, đã review)**  
+> **Tác giả:** Thiết kế bởi Antigravity  
+> **Ghi chú review v2:** Sửa 4 điểm sau khi kiểm chứng thực tế: (1) làm rõ "user service không cần admin" chỉ áp dụng Linux; (2) sửa sai kỹ thuật — `node-windows.svc.install()` **không** tự bật UAC prompt, cần check `isAdminUser()` + elevate chủ động; (3) thống nhất bản WinSW giữa 2 phương án (node-windows dùng bản .NET Framework cũ, không phải v3); (4) đưa Windows Task Scheduler (`--scheduler`, không cần admin) từ Phase 3 lên Phase 1 làm fallback thật sự cho SCM.
 
 ---
 
@@ -22,7 +23,7 @@ Yêu cầu cốt lõi:
 - **Không phụ thuộc vào loại Windows** (Home, Pro, Server).
 - **Logs rõ ràng**, có thể tail real-time.
 - Có thể chạy relay nhiều port từ một file cấu hình.
-- Hỗ trợ chạy dưới dạng **user service** (không cần root/admin) khi có thể.
+- Hỗ trợ chạy dưới dạng **user service** (không cần root/admin) khi có thể — **chỉ áp dụng cho Linux** (`systemd --user`). Trên Windows, đăng ký service với SCM luôn yêu cầu quyền Administrator theo thiết kế của hệ điều hành, không có cơ chế "user-level SCM" tương đương; đây là giới hạn cứng, không phải điều CLI có thể lách qua. Với Windows, phương án không-cần-admin là Task Scheduler (xem §9), nhưng đó không phải service thật (không auto-start trước khi user login, restart-on-crash yếu hơn SCM).
 
 ---
 
@@ -87,7 +88,7 @@ tailsacle-cli service <subcommand> [options]
 | Subcommand | Mô tả |
 |---|---|
 | `service init [--name <name>] [--out <file>]` | Tạo file cấu hình mẫu (JSON/JSONC), người dùng chỉnh sửa |
-| `service install [--file <config>] [--user] [--yes]` | Đọc config, cài đặt và enable service |
+| `service install [--file <config>] [--user] [--scheduler] [--yes]` | Đọc config, cài đặt và enable service. `--user`: systemd user service (Linux only, không cần sudo). `--scheduler`: Task Scheduler thay vì SCM (Windows only, không cần admin, xem §9) |
 | `service uninstall [--name <name>] [--yes]` | Gỡ cài đặt và xóa file unit |
 | `service status [--name <name>] [--json]` | Xem trạng thái + uptime + restart count |
 | `service logs [--name <name>] [--lines <n>] [--follow]` | Xem logs (journal tail hoặc WinSW log) |
@@ -206,12 +207,16 @@ export interface ServiceManager {
 
 **Quy trình install:**
 1. Validate config (tên hợp lệ, script tồn tại, ports không conflict).
-2. Resolve đường dẫn tuyệt đối của node.exe và script.
-3. Tạo WinSW service definition qua `node-windows.Service`.
-4. Gọi `svc.install()` (kích hoạt UAC prompt nếu cần).
-5. Set `StartType = Automatic` để service tự start khi boot.
-6. Ghi vào registry.json.
-7. In JSON envelope với service name, executable path, log dir.
+2. **Check quyền admin trước tiên** bằng `node-windows.isAdminUser()`. `svc.install()` **không** tự kích hoạt UAC prompt — nếu process hiện tại không chạy elevated, nó fail thẳng với lỗi "access denied", không có popup nào tự bật lên. Đây là hành vi thực tế đã kiểm chứng của package, không phải giả định.
+3. Nếu chưa elevated:
+   - User thuộc nhóm Administrators nhưng terminal chưa "Run as Administrator" → tự re-spawn process qua PowerShell `Start-Process -Verb RunAs` để bật UAC prompt thật, rồi tiếp tục install trong process con.
+   - User là Standard User thật sự (không thuộc nhóm Administrators) → không có cách nào vượt UAC từ code. In lỗi rõ ràng: "Cần chạy trong terminal Administrator, hoặc dùng `service install --scheduler` (Task Scheduler, không cần admin, xem §9)".
+4. Resolve đường dẫn tuyệt đối của node.exe và script.
+5. Tạo WinSW service definition qua `node-windows.Service`.
+6. Gọi `svc.install()` (đã chắc chắn elevated ở bước 3).
+7. Set `StartType = Automatic` để service tự start khi boot.
+8. Ghi vào registry.json.
+9. In JSON envelope với service name, executable path, log dir.
 
 **Log (Windows):**
 - WinSW ghi stdout/stderr vào `<logDir>/<name>.out.log` và `<name>.err.log`.
@@ -219,13 +224,13 @@ export interface ServiceManager {
 - Rotation: theo `maxSizeMb` + `keepFiles` trong config.
 
 **Privilege:**
-- Cần Admin (`net session` check trước khi install/uninstall).
-- Nếu không phải admin → in hướng dẫn: "Mở lại terminal với Run as Administrator".
+- Cần Admin để đăng ký service — giới hạn cứng của Windows SCM (`CreateService` API luôn đòi admin token), không phụ thuộc lib nào (`node-windows`, WinSW tự bundle, hay `sc.exe` thẳng đều như nhau).
+- Check bằng `isAdminUser()` (không dùng `net session` — lệnh đó cũng cần elevated để chạy đúng, dễ false-negative).
+- Nếu không phải admin → in hướng dẫn cụ thể như bước 3 ở trên, không chỉ nói chung chung "mở lại terminal".
 
 **Compatibility:**
-- `.NET Framework 4.6.1+` hoặc `.NET 6+` Runtime phải có (WinSW dependency).
-- Kiểm tra trước khi install: `dotnet --version` hoặc check registry key.
-- Nếu thiếu → in link download và error rõ ràng.
+- `node-windows` bundle theo **WinSW bản cũ** (biên dịch .NET Framework, không phải WinSW v3/.NET 6) — bản này thường **đã có sẵn** trên Windows 10/11 (built-in .NET Framework), nên bước check `dotnet --version` là **thừa** khi dùng `node-windows` và nên bỏ.
+- Chỉ cần check `.NET 6+ Runtime` nếu đi theo "Phương án 2: tự bundle WinSW v3" (§8) — hai phương án đang dùng 2 bản WinSW khác nhau, cần chọn 1 và xóa ghi chú compatibility của phương án còn lại để tránh nhầm lẫn khi code.
 
 ### 5.2 Linux (src/service/linux.ts)
 
@@ -318,7 +323,8 @@ WantedBy=multi-user.target
 - [ ] `src/service/config.ts` — Load, validate, generate config file
 - [ ] `src/service/registry.ts` — Persist installed service list
 - [ ] `src/service/linux.ts` — systemd implementation
-- [ ] `src/service/windows.ts` — node-windows / WinSW implementation
+- [ ] `src/service/windows.ts` — node-windows / WinSW implementation, kèm check `isAdminUser()` + elevate flow (§5.1)
+- [ ] `src/service/windows-scheduler.ts` — fallback Task Scheduler (`--scheduler`, không cần admin, xem §9)
 - [ ] `src/service/index.ts` — Platform dispatch
 - [ ] `src/cli.ts` — Thêm `service` command với các subcommand
 - [ ] `src/manifest.ts` — Cập nhật agent manifest
@@ -369,9 +375,9 @@ WantedBy=multi-user.target
 
 | Tính năng | Ghi chú |
 |---|---|
+| **Windows Task Scheduler** (`--scheduler`) | **Đưa vào Phase 1**, không để Phase 3 — vì SCM luôn cần admin (giới hạn cứng, xem §5.1), đây là con đường duy nhất chạy nền trên Windows không cần admin, tương đương vai trò của `systemd --user` bên Linux. `schtasks /create /sc onlogon` (không tick "run with highest privileges"). Giới hạn cần nêu rõ với user: chỉ start khi user đã login (không chạy trước khi login như service thật), và cơ chế retry-on-crash yếu hơn SCM/systemd (dùng thêm trigger `/ri` để retry định kỳ thay vì restart tức thời) |
 | macOS launchd | Sinh .plist XML vào ~/Library/LaunchAgents/ |
 | Docker/container | Không cần service install — relay --file làm entrypoint |
-| Windows Task Scheduler | Thay thế khi không có quyền SCM |
 | Systemd socket activation | Service chỉ start khi có connection (lazy start) |
 | Ansible/Terraform provisioner | service init --format ansible sinh task YAML |
 
@@ -380,9 +386,9 @@ WantedBy=multi-user.target
 ## 10. Câu hỏi cần quyết định trước khi triển khai
 
 1. **Bundle WinSW hay dùng `node-windows`?**
-   - `node-windows`: ít code hơn, nhưng npm package khá cũ (cập nhật lần cuối 2021).
-   - Bundle WinSW v3: không phụ thuộc, thêm ~5MB binary vào package, kiểm soát hoàn toàn.
-   - *Gợi ý: Bắt đầu với `node-windows`, có kế hoạch migration nếu bị abandon.*
+   - `node-windows`: ít code hơn, npm package khá cũ, bundle theo **WinSW bản .NET Framework cũ** (không phải v3) — nhưng chính vì thế thường **không cần cài thêm .NET runtime** trên Win10/11 (đã có sẵn), đơn giản hơn cho end-user.
+   - Bundle WinSW v3: không phụ thuộc npm, thêm ~5MB binary, kiểm soát hoàn toàn, nhưng cần .NET 6+ runtime — có thể phải tự bundle self-contained build để tránh bắt user cài thêm.
+   - *Gợi ý: Bắt đầu với `node-windows` (ít friction cài đặt hơn cho user), có kế hoạch migration nếu bị abandon. Dù chọn nhánh nào, quy trình elevate ở §5.1 (check `isAdminUser()` trước, không dựa vào UAC tự bật) áp dụng như nhau.*
 
 2. **Có bổ sung macOS (Phase 1) hay để Phase 2?**
 
