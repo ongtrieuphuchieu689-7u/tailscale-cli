@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "src/service/**"
+      - "scripts/ci/**"
       - "docs/service-install-plan.md"
       - "docs/service-install-verification.md"
       - ".github/workflows/service-install-test.yml"
@@ -14,7 +15,7 @@ permissions:
 
 jobs:
   test-linux-service:
-    name: Linux systemd Service Test (Rootless & System)
+    name: Linux systemd Service Test (Rootless)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -33,63 +34,39 @@ jobs:
           npm run build
           npm link
 
-      - name: Test Service Init (Sample Config Generation)
+      - name: Test Service Init
         run: |
           mkdir -p /tmp/ts-service-test
           tailsacle-cli service init --name test-relay-service --out /tmp/ts-service-test/service.jsonc
           test -f /tmp/ts-service-test/service.jsonc
           cat /tmp/ts-service-test/service.jsonc
 
-      - name: Create Test Target Echo Server
+      - name: Start Echo Server
         run: |
-          node -e '
-            const net = require("net");
-            const server = net.createServer((sock) => sock.pipe(sock));
-            server.listen(19999, "127.0.0.1", () => console.log("Target echo server ready on 19999"));
-          ' &
+          node scripts/ci/service-test-echo-server.mjs --port 19999 &
           sleep 2
 
-      - name: Update Config with Real Test Arguments
+      - name: Patch Config
         run: |
-          node -e '
-            const fs = require("fs");
-            const content = fs.readFileSync("/tmp/ts-service-test/service.jsonc", "utf8")
-              .replace(/\/\/.*$/gm, "")
-              .replace(/\/\*[\s\S]*?\*\//gm, "");
-            const cfg = JSON.parse(content);
-            cfg.args = ["relay", "--listen", "18888", "--target", "127.0.0.1:19999"];
-            fs.writeFileSync("/tmp/ts-service-test/service.json", JSON.stringify(cfg, null, 2));
-          '
+          node scripts/ci/service-test-patch-config.mjs \
+            --in  /tmp/ts-service-test/service.jsonc \
+            --out /tmp/ts-service-test/service.json \
+            --listen 18888 \
+            --target 127.0.0.1:19999
 
       - name: Install User Service (systemd rootless)
-        run: |
-          tailsacle-cli service install --file /tmp/ts-service-test/service.json --user --yes --json
+        run: tailsacle-cli service install --file /tmp/ts-service-test/service.json --user --yes --json
 
       - name: Check Service Status
         run: |
           tailsacle-cli service status --name test-relay-service --json
           systemctl --user is-active test-relay-service
 
-      - name: Verify TCP Traffic Flow through Service
-        run: |
-          node -e '
-            const net = require("net");
-            const client = net.connect(18888, "127.0.0.1", () => {
-              client.write("HELLO_FROM_SERVICE_TEST\n");
-            });
-            client.on("data", (d) => {
-              console.log("Received via Service Relay:", d.toString());
-              if (d.toString().includes("HELLO_FROM_SERVICE_TEST")) {
-                console.log("VERIFICATION_SUCCESSFUL");
-                process.exit(0);
-              }
-            });
-            setTimeout(() => { console.error("Timeout waiting for relay"); process.exit(1); }, 5000);
-          '
+      - name: Verify TCP Traffic Flow
+        run: node scripts/ci/service-test-verify-relay.mjs --port 18888
 
       - name: Check Service Logs
-        run: |
-          tailsacle-cli service logs --name test-relay-service --lines 30
+        run: tailsacle-cli service logs --name test-relay-service --lines 30
 
       - name: Restart Service
         run: |
@@ -109,7 +86,7 @@ jobs:
           test ! -f ~/.config/systemd/user/test-relay-service.service
 
   test-windows-service:
-    name: Windows SCM Service Test (WinSW / node-windows)
+    name: Windows SCM Service Test (WinSW)
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -144,26 +121,18 @@ jobs:
           tailsacle-cli service init --name win-relay-svc --out "C:\tmp\ts-service-test\service.jsonc"
           Get-Content "C:\tmp\ts-service-test\service.jsonc"
 
-      - name: Update Config with Windows Test Args
+      - name: Patch Config
         shell: pwsh
         run: |
-          # Write JS to a temp file to avoid PowerShell string-quoting issues with node -e
-          $script = @'
-          const fs = require("fs");
-          const content = fs.readFileSync("C:/tmp/ts-service-test/service.jsonc", "utf8")
-            .replace(/\/\/.*$/gm, "")
-            .replace(/\/\*[\s\S]*?\*\//gm, "");
-          const cfg = JSON.parse(content);
-          cfg.args = ["relay", "--listen", "18888", "--target", "127.0.0.1:19999"];
-          fs.writeFileSync("C:/tmp/ts-service-test/service.json", JSON.stringify(cfg, null, 2));
-          '@
-          $script | Out-File -FilePath "C:\tmp\patch-cfg.cjs" -Encoding utf8
-          node "C:\tmp\patch-cfg.cjs"
+          node scripts/ci/service-test-patch-config.mjs `
+            --in  "C:/tmp/ts-service-test/service.jsonc" `
+            --out "C:/tmp/ts-service-test/service.json" `
+            --listen 18888 `
+            --target "127.0.0.1:19999"
 
       - name: Install Windows Service (Elevated GitHub Runner)
         shell: pwsh
-        run: |
-          tailsacle-cli service install --file "C:\tmp\ts-service-test\service.json" --yes --json
+        run: tailsacle-cli service install --file "C:\tmp\ts-service-test\service.json" --yes --json
 
       - name: Verify SCM State
         shell: pwsh
@@ -173,8 +142,7 @@ jobs:
 
       - name: Check Service Logs
         shell: pwsh
-        run: |
-          tailsacle-cli service logs --name win-relay-svc --lines 30
+        run: tailsacle-cli service logs --name win-relay-svc --lines 30
 
       - name: Stop, Start, Restart Cycle
         shell: pwsh
@@ -188,6 +156,8 @@ jobs:
         shell: pwsh
         run: |
           tailsacle-cli service uninstall --name win-relay-svc --yes --json
+          cmd /c 'sc query win-relay-svc >nul 2>&1'
+          if ($LASTEXITCODE -eq 0) { throw "SCM service still exists after uninstall" }
 
   test-windows-scheduler:
     name: Windows Task Scheduler Test (schtasks, no admin)
@@ -214,23 +184,20 @@ jobs:
         shell: pwsh
         run: npm link
 
-      - name: Init config for scheduler
+      - name: Init Config
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "C:\tmp\ts-sched-test"
           tailsacle-cli service init --name win-sched-svc --out "C:\tmp\ts-sched-test\service.jsonc"
-          # Use PowerShell here-string to avoid node -e quoting issues on Windows
-          $script = @'
-          const fs = require("fs");
-          const content = fs.readFileSync("C:/tmp/ts-sched-test/service.jsonc", "utf8")
-            .replace(/\/\/.*$/gm, "")
-            .replace(/\/\*[\s\S]*?\*\//gm, "");
-          const cfg = JSON.parse(content);
-          cfg.args = ["relay", "--listen", "18889", "--target", "127.0.0.1:19999"];
-          fs.writeFileSync("C:/tmp/ts-sched-test/service.json", JSON.stringify(cfg, null, 2));
-          '@
-          $script | Out-File -FilePath "C:\tmp\patch-sched.cjs" -Encoding utf8
-          node "C:\tmp\patch-sched.cjs"
+
+      - name: Patch Config
+        shell: pwsh
+        run: |
+          node scripts/ci/service-test-patch-config.mjs `
+            --in  "C:/tmp/ts-sched-test/service.jsonc" `
+            --out "C:/tmp/ts-sched-test/service.json" `
+            --listen 18889 `
+            --target "127.0.0.1:19999"
 
       - name: Install via Task Scheduler
         shell: pwsh
@@ -253,4 +220,3 @@ jobs:
           tailsacle-cli service uninstall --name win-sched-svc --yes --json
           cmd /c 'schtasks /query /tn "tailsacle-cli\win-sched-svc" >nul 2>&1'
           if ($LASTEXITCODE -eq 0) { throw "scheduler task still exists" }
-
