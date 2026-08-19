@@ -121,11 +121,30 @@ Dry-run first when changing deployment intent:
 npx tailsacle-cli deploy --dry-run --expose 3000 --json
 ```
 
-## Serve and Funnel
+## Serve, Funnel & TCP Relay
 
 ```bash
 npx tailsacle-cli serve 3000 --https 443 --path api --json
 npx tailsacle-cli funnel 3000 --https 443 --path api --yes --json
+```
+
+### TCP Forwarding / Relay (Postgres / MySQL / Raw TCP)
+
+**Phương án 1 — Tailscale Native Serve/Funnel Proxy:**
+Forward port từ máy này sang máy khác qua tailnet:
+```bash
+# Expose port 5432 trên máy hiện tại forward thẳng tới IP Tailscale của máy DB target:
+npx tailsacle-cli serve --tcp 5432 tcp://100.x.y.z:5432
+```
+
+**Phương án 2 — Node.js TCP Relay (Trạm trung chuyển):**
+Chạy trạm trung chuyển chuyển tiếp TCP traffic sang máy khác (có thể mở rộng kèm `--serve` hoặc `--funnel`):
+```bash
+# Relay local port 5432 -> target machine 100.x.y.z:5432
+npx tailsacle-cli relay --listen 5432 --target 100.x.y.z:5432
+
+# Relay + tự động cấu hình Tailscale Serve trong tailnet:
+npx tailsacle-cli relay --listen 5432 --target 100.x.y.z:5432 --serve
 ```
 
 Funnel ports are validated before execution; supported public HTTPS ports are 443, 8443 and 10000.

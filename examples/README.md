@@ -17,20 +17,30 @@ máy ảo…).
 |---|---|---|---|
 | **Echo HTTP server** qua tailnet — serve HTTP (MagicDNS) + TCP forwarder (IP trực tiếp) | [tailscale-echo-server.yml](../.github/workflows/tailscale-echo-server.yml) | [tailscale-echo-server.yml](./workflows/tailscale-echo-server.yml) | [echo-server.mjs](./echo-server.mjs) |
 | **PostgreSQL** nhẹ (Docker) qua tailnet — truy cập bằng psql/DBeaver qua IP hoặc MagicDNS | [tailscale-postgres.yml](../.github/workflows/tailscale-postgres.yml) | [tailscale-postgres.yml](./workflows/tailscale-postgres.yml) | — |
+| **TCP Relay / Trạm trung chuyển Postgres** — chuyển tiếp traffic TCP sang server khác | [tailscale-tcp-relay.yml](../.github/workflows/tailscale-tcp-relay.yml) | [tailscale-tcp-relay.yml](./workflows/tailscale-tcp-relay.yml) | — |
+| **Matrix Test: HTTP + Postgres Relay + Serve + Funnel** — chạy song song các job kiểm thử | [tailscale-relay-matrix.yml](../.github/workflows/tailscale-relay-matrix.yml) | [tailscale-relay-matrix.yml](./workflows/tailscale-relay-matrix.yml) | — |
+
+> ⚠️ **Ghi nhận trạng thái kiểm thử:**
+> - **TCP Postgres Relay (local & Docker)**: Đã kiểm thử thành công (xác thực handshake MD5/SCRAM qua relay).
+> - **HTTP Relay qua Node.js**: Đã kiểm thử thành công trong workflow matrix test.
+> - **Public Funnel TCP Relay (`10000:port`) từ Internet vào trạm trung chuyển Postgres**: **Chưa kiểm thử thực địa từ client Internet ngoài tailnet** (được cung cấp sẵn trong workflow `tailscale-relay-matrix.yml` với input `enable_funnel=true` để kiểm thử thêm).
 
 ## 2. Lệnh `tailsacle-cli` được dùng
 
 | Lệnh | Ý nghĩa | Dùng trong |
 |---|---|---|
-| `tailsacle-cli up --yes --apply-policy --no-ssh --json` | Join tailnet: tạo auth key qua OAuth trust credential (`TS_CLIENT_SECRET`), chạy `tailscale up`, tự cấp `tagOwners`/`nodeAttrs` nếu thiếu | cả 2 workflow |
+| `tailsacle-cli up --yes --apply-policy --no-ssh --json` | Join tailnet: tạo auth key qua OAuth trust credential (`TS_CLIENT_SECRET`), chạy `tailscale up`, tự cấp `tagOwners`/`nodeAttrs` nếu thiếu | tất cả workflow |
+| `tailsacle-cli relay --listen <port> --target <host:port>` | Chạy trạm trung chuyển TCP/HTTP relay proxy, forward trực tiếp traffic sang host/port khác | tcp-relay, relay-matrix |
 | `tailsacle-cli serve "http://127.0.0.1:8080" --http 80 --json` | Expose HTTP qua Serve — **route theo Host header**, truy cập bằng MagicDNS name (`http://<hostname>.<tailnet>.ts.net/`) | echo-server |
-| `tailsacle-cli serve "tcp://127.0.0.1:8080" --tcp 8080 --json` | TCP forwarder raw — không cần Host matching, **truy cập bằng IP trực tiếp** (`http://<100.x.x.x>:8080/` hoặc `psql -h <100.x.x.x>`) | echo-server + postgres |
-| `tailsacle-cli status --json` | Lấy tailnet IP + MagicDNS name của node (để in access info) | cả 2 workflow |
+| `tailsacle-cli serve "tcp://127.0.0.1:8080" --tcp 8080 --json` | TCP forwarder raw — không cần Host matching, **truy cập bằng IP trực tiếp** (`http://<100.x.x.x>:8080/` hoặc `psql -h <100.x.x.x>`) | echo-server + postgres + relay |
+| `tailsacle-cli funnel --tcp 10000:<local_port> --yes` | Expose cổng TCP công khai ra Internet thông qua Funnel | relay-matrix |
+| `tailsacle-cli status --json` | Lấy tailnet IP + MagicDNS name của node (để in access info) | tất cả workflow |
 
 Các lệnh khác (dùng trong trường hợp mở rộng, xem [docs/usage.md](../docs/usage.md)):
 
 | Lệnh | Tình huống |
 |---|---|
+| `tailsacle-cli relay -l 5432 -t 100.x.y.z:5432 --serve` | Chạy relay chuyển tiếp Postgres sang máy khác và tự động bật Serve trong tailnet |
 | `tailsacle-cli funnel <target> --json` | Public HTTPS/TCP ra internet (Funnel) — verify public DNS + TLS thật trước khi báo URL |
 | `tailsacle-cli dns --enable-magicdns --yes` | Bật MagicDNS cho tailnet |
 | `tailsacle-cli policy --file policy.hujson --apply --yes` | Đồng bộ ACL policy có bảo vệ (diff → validate → backup → ETag) |
@@ -52,6 +62,12 @@ gh workflow run tailscale-echo-server.yml -f duration_minutes=60
 
 # PostgreSQL, giữ node 120 phút, expose port 5432
 gh workflow run tailscale-postgres.yml -f duration_minutes=120
+
+# TCP Relay chuyển tiếp PostgreSQL sang máy đích
+gh workflow run tailscale-tcp-relay.yml -f duration_minutes=30
+
+# Chạy Matrix Workflow kiểm thử song song HTTP + Postgres Relay và Serve/Funnel
+gh workflow run tailscale-relay-matrix.yml -f duration_minutes=20 -f enable_funnel=true
 ```
 
 Access info (IP, MagicDNS name, lệnh kết nối) được in trong **step summary**

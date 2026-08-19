@@ -1270,6 +1270,147 @@ program
     },
   );
 
+import { startRelay } from "./relay.js";
+
+program
+  .command("relay")
+  .description(
+    "Run a TCP relay proxy to forward connections to another machine",
+  )
+  .requiredOption("-l, --listen <port>", "local listen port (e.g. 5432)")
+  .requiredOption(
+    "-t, --target <host:port>",
+    "target machine host:port (e.g. 100.x.y.z:5432 or other-host:5432)",
+  )
+  .option("--host <address>", "listen host (default: 0.0.0.0)", "0.0.0.0")
+  .option(
+    "--serve",
+    "also configure tailscale serve for this port in the tailnet",
+  )
+  .option(
+    "--funnel",
+    "also configure tailscale funnel for this port publicly (requires --serve)",
+  )
+  .action(
+    async (options: {
+      listen: string;
+      target: string;
+      host?: string;
+      serve?: boolean;
+      funnel?: boolean;
+    }) => {
+      const start = performance.now();
+      try {
+        const listenPort = Number(options.listen);
+        if (
+          !Number.isFinite(listenPort) ||
+          listenPort <= 0 ||
+          listenPort > 65535
+        ) {
+          throw new Error(
+            `RELAY_PORT_INVALID: --listen must be a valid port number (1-65535), got ${options.listen}`,
+          );
+        }
+
+        const targetParts = options.target.split(":");
+        if (targetParts.length !== 2) {
+          throw new Error(
+            `RELAY_TARGET_INVALID: --target must be format host:port, got ${options.target}`,
+          );
+        }
+        const targetHost = targetParts[0]!.trim();
+        const targetPort = Number(targetParts[1]!.trim());
+        if (
+          !targetHost ||
+          !Number.isFinite(targetPort) ||
+          targetPort <= 0 ||
+          targetPort > 65535
+        ) {
+          throw new Error(
+            `RELAY_TARGET_INVALID: invalid host or port in --target ${options.target}`,
+          );
+        }
+
+        const relay = await startRelay({
+          listenPort,
+          targetHost,
+          targetPort,
+          listenHost: options.host ?? "0.0.0.0",
+          onConnection: (addr) => {
+            if (!program.opts<{ json?: boolean }>().json) {
+              console.error(
+                `[relay] Connection from ${addr} -> forwarding to ${targetHost}:${targetPort}`,
+              );
+            }
+          },
+          onError: (err) => {
+            if (!program.opts<{ json?: boolean }>().json) {
+              console.error(`[relay] Error: ${err.message}`);
+            }
+          },
+        });
+
+        const actions = [
+          `TCP relay listening on ${options.host ?? "0.0.0.0"}:${listenPort} -> ${targetHost}:${targetPort}`,
+        ];
+
+        if (options.serve || options.funnel) {
+          const local = new TailscaleLocal(await findTailscale());
+          if (options.serve) {
+            await local.serve([
+              "--bg",
+              "--yes",
+              `--tcp=${listenPort}`,
+              `tcp://127.0.0.1:${listenPort}`,
+            ]);
+            actions.push(
+              `configured Tailscale Serve on TCP port ${listenPort}`,
+            );
+          }
+          if (options.funnel) {
+            await local.funnel([
+              "--bg",
+              `--tcp=${listenPort}`,
+              `tcp://127.0.0.1:${listenPort}`,
+            ]);
+            actions.push(
+              `configured Tailscale Funnel on TCP port ${listenPort}`,
+            );
+          }
+        }
+
+        emit(
+          "relay",
+          {
+            status: "running",
+            listenPort,
+            listenHost: options.host ?? "0.0.0.0",
+            targetHost,
+            targetPort,
+            tailscaleServe: Boolean(options.serve),
+            tailscaleFunnel: Boolean(options.funnel),
+          },
+          [],
+          actions,
+          [],
+          start,
+        );
+
+        // Keep process alive for relay unless interrupted
+        await new Promise<void>((resolve) => {
+          process.on("SIGINT", () => {
+            void relay.close().then(() => resolve());
+          });
+          process.on("SIGTERM", () => {
+            void relay.close().then(() => resolve());
+          });
+        });
+      } catch (error) {
+        fail("relay", error, start);
+      }
+    },
+  );
+
 program
   .command("dns")
   .description("Read tailnet DNS settings; optionally enable MagicDNS")

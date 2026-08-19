@@ -1,0 +1,137 @@
+name: Tailscale TCP Relay Test
+
+# Tests the TCP relay functionality by forwarding PostgreSQL connections
+# from a relay port to the PostgreSQL instance running on another target port/host.
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: "Minutes to keep PostgreSQL & Relay reachable on the tailnet (max 360)"
+        required: false
+        default: "30"
+      relay_listen_port:
+        description: "Relay listen port exposed on the tailnet"
+        required: false
+        default: "5432"
+      target_pg_port:
+        description: "Direct PostgreSQL target port"
+        required: false
+        default: "15432"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tailscale-tcp-relay
+  cancel-in-progress: true
+
+jobs:
+  relay-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 390
+    env:
+      TS_CLIENT_SECRET: ${{ secrets.TS_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Build & verify local tailsacle-cli
+        run: |
+          npm ci
+          npm run check
+          npm run build
+          npm link
+          echo "tailsacle-cli link ready: $(tailsacle-cli --version)"
+
+      - name: Start PostgreSQL target in Docker
+        run: |
+          docker run -d --name pg-target \
+            -e POSTGRES_USER=relayuser \
+            -e POSTGRES_PASSWORD=relaypass123 \
+            -e POSTGRES_DB=relaydb \
+            -p 127.0.0.1:${{ inputs.target_pg_port }}:5432 \
+            postgres:16-alpine
+          for i in $(seq 1 60); do
+            if docker exec pg-target psql -U relayuser -d relaydb -c "SELECT 1" > /dev/null 2>&1; then
+              echo "postgres target is ready on 127.0.0.1:${{ inputs.target_pg_port }}"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Seed test data in PostgreSQL target
+        run: |
+          docker exec -i pg-target psql -U relayuser -d relaydb <<'SQL'
+          CREATE TABLE IF NOT EXISTS relay_test (
+            id serial PRIMARY KEY,
+            payload text NOT NULL
+          );
+          INSERT INTO relay_test (payload) VALUES ('hello from relay proxy'), ('forwarded successfully');
+          SQL
+          docker exec pg-target psql -U relayuser -d relaydb -c "SELECT * FROM relay_test;"
+
+      - name: Start tailsacle-cli TCP relay (background)
+        run: |
+          node dist/cli.js relay --listen ${{ inputs.relay_listen_port }} --target 127.0.0.1:${{ inputs.target_pg_port }} &
+          sleep 2
+
+      - name: Verify PostgreSQL connection through TCP relay
+        run: |
+          # Install psql client locally on runner
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          # Query Postgres through relay listen port
+          PGPASSWORD=relaypass123 psql -h 127.0.0.1 -p ${{ inputs.relay_listen_port }} -U relayuser -d relaydb -c "SELECT * FROM relay_test;"
+          echo "=== RELAY TEST VERIFIED LOCALLY ==="
+
+      - name: Join the tailnet (tailsacle-cli up)
+        if: env.TS_CLIENT_SECRET != ''
+        run: tailsacle-cli up --yes --apply-policy --no-ssh --json
+
+      - name: Expose relay port on the tailnet via serve --tcp
+        if: env.TS_CLIENT_SECRET != ''
+        run: |
+          tailsacle-cli serve "tcp://127.0.0.1:${{ inputs.relay_listen_port }}" \
+            --tcp ${{ inputs.relay_listen_port }} --json
+
+      - name: Collect access info and report
+        if: env.TS_CLIENT_SECRET != ''
+        id: access
+        run: |
+          tailsacle-cli status --json > /tmp/tailscale-status.json
+          node - <<'NODE'
+          const fs = require("fs");
+          const raw = JSON.parse(fs.readFileSync("/tmp/tailscale-status.json", "utf8"));
+          const status = raw.resolved ?? raw;
+          const self = status.Self ?? {};
+          const ip = (self.TailscaleIPs ?? []).find((v) => v.startsWith("100."));
+          const dns = String(self.DNSName ?? "").replace(/\.$/, "");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `tailnet_ip=${ip ?? ""}\ntailnet_dns=${dns ?? ""}\n`);
+          NODE
+
+      - name: Keep alive for remote access
+        if: env.TS_CLIENT_SECRET != ''
+        env:
+          TAILNET_IP: ${{ steps.access.outputs.tailnet_ip }}
+          TAILNET_DNS: ${{ steps.access.outputs.tailnet_dns }}
+          RELAY_PORT: ${{ inputs.relay_listen_port }}
+          DURATION_MINUTES: ${{ inputs.duration_minutes }}
+        run: |
+          {
+            echo "## Tailscale TCP Relay PostgreSQL — Access Info"
+            echo ""
+            echo "Kết nối tới PostgreSQL thông qua trạm trung chuyển TCP Relay:"
+            echo ""
+            echo '```bash'
+            echo "psql \"host=${TAILNET_IP} port=${RELAY_PORT} user=relayuser password=relaypass123 dbname=relaydb\""
+            echo "# hoặc qua MagicDNS:"
+            echo "psql \"host=${TAILNET_DNS} port=${RELAY_PORT} user=relayuser password=relaypass123 dbname=relaydb\""
+            echo '```'
+            echo ""
+            echo "Node sống trong ~${DURATION_MINUTES} phút."
+          } > "$GITHUB_STEP_SUMMARY"
+          echo "Keeping relay alive for ${DURATION_MINUTES} minutes..."
+          sleep "$((DURATION_MINUTES * 60))"

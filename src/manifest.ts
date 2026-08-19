@@ -275,6 +275,28 @@ export const manifest = {
       confirmation: "never",
     },
     {
+      name: "relay",
+      summary:
+        "Run a TCP relay proxy to forward connections to another machine, optionally exposing via Serve/Funnel.",
+      command: [
+        "relay",
+        "-l, --listen <port>",
+        "-t, --target <host:port>",
+        ["--host <address>"],
+        ["--serve"],
+        ["--funnel"],
+      ],
+      consumes: { inputs: ["listen port", "target host:port"] },
+      outputs: {
+        json: "resolved { status, listenPort, listenHost, targetHost, targetPort, tailscaleServe, tailscaleFunnel }",
+      },
+      scopes: ["none"],
+      privileges: ["none (or tailscaled running if --serve/--funnel)"],
+      sideEffects: ["run local TCP proxy", "optional Serve/Funnel configure"],
+      retryable: true,
+      confirmation: "never",
+    },
+    {
       name: "dns",
       summary: "Read tailnet DNS settings; optionally enable MagicDNS.",
       command: ["dns", ["--enable-magicdns"], ["--dry-run"], ["--yes"]],

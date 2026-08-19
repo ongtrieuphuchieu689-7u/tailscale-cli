@@ -45,9 +45,11 @@ auto-detecting.
 
 Policy writes require a fetched remote policy, diff, remote validation, local backup, ETag-protected write and a final confirmation. Provisioning merges into the existing HuJSON text so comments and trailing commas are preserved (`policy.hujson` sync writes the file verbatim). Device cleanup requires an exact hostname/tag match (never substring), devices without `lastSeen` are never treated as offline, and cleanup permission failures are non-fatal in deploy. In CI/non-TTY environments use `--yes` explicitly.
 
-## Funnel and DNS
+## Funnel, Serve, TCP Relay and DNS
 
 - `funnel` refuses ephemeral nodes (they never publish public DNS), auto-detects the target from `$PORT`, supports `--tcp <public:local>` and repeatable `--expose 443=3000 --expose 443/api=3001`, and verifies the public A record (dns.google + cloudflare-dns.com + getent) **and the live endpoint** up to `--verify-timeout` (default 120s) before reporting the public URL: HTTPS funnels are probed with a TLS handshake + HTTP request per public port (`tlsVerified`/`tlsVerifiedPorts`), TCP funnels with a raw TCP connect (`tcpVerified`). DNS alone is never reported as success; an unreachable endpoint fails with `FUNNEL_ENDPOINT_UNREACHABLE`.
+- `serve` shares a local or remote target inside the tailnet (e.g. `tailsacle-cli serve --tcp 5432 tcp://100.x.y.z:5432`).
+- `relay` runs a high-performance, full-duplex TCP relay proxy to forward connections across machines (e.g. `tailsacle-cli relay -l 5432 -t 100.x.y.z:5432`). It optionally accepts `--serve` to automatically configure Tailscale Serve for the listening port in the tailnet, and `--funnel` to expose it publicly.
 - `dns --enable-magicdns --yes` enables MagicDNS on the tailnet; `dns --enable-magicdns --dry-run` previews the action without applying; plain `dns` reads nameservers/preferences/search paths.
 - Custom `TS_TAILNET` domains (not `*.ts.net`) emit a warning because Funnel DNS and HTTPS rely on a Tailscale-hosted domain.
 

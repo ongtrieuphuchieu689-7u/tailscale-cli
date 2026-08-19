@@ -1,0 +1,224 @@
+name: Tailscale TCP/HTTP Relay & Funnel Matrix Test
+
+# Tests:
+# 1. HTTP Relay via Node.js relay -> Target HTTP Echo Server
+# 2. PostgreSQL TCP Relay -> Target PostgreSQL Server
+# 3. Tailscale Serve exposure (Tailnet internal TCP/HTTP)
+# 4. Tailscale Funnel exposure (Public Internet TCP/HTTPS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: "Minutes to keep services alive on tailnet for testing (max 180)"
+        required: false
+        default: "20"
+      enable_funnel:
+        description: "Enable public Tailscale Funnel verification (true/false)"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tailscale-relay-matrix
+  cancel-in-progress: true
+
+jobs:
+  # Job 1: Test HTTP Relay & Verification
+  test-http-relay:
+    runs-on: ubuntu-latest
+    name: HTTP Relay Verification
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Build local tailsacle-cli
+        run: |
+          npm ci
+          npm run check
+          npm run build
+
+      - name: Start target HTTP server (Port 8081)
+        run: |
+          node -e '
+          const http = require("node:http");
+          const server = http.createServer((req, res) => {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ message: "Hello from Target HTTP Server", url: req.url }));
+          });
+          server.listen(8081, "127.0.0.1", () => console.log("Target HTTP server ready on 127.0.0.1:8081"));
+          ' &
+          sleep 1
+
+      - name: Start tailsacle-cli HTTP/TCP Relay (Listen 8080 -> Target 8081)
+        run: |
+          node dist/cli.js relay --listen 8080 --target 127.0.0.1:8081 &
+          sleep 2
+
+      - name: Verify HTTP communication through Relay
+        run: |
+          RESPONSE=$(curl -s http://127.0.0.1:8080/test-endpoint)
+          echo "Response via Relay: $RESPONSE"
+          if echo "$RESPONSE" | grep -q "Hello from Target HTTP Server"; then
+            echo "✅ SUCCESS: HTTP Relay works properly!"
+          else
+            echo "❌ ERROR: HTTP Relay failed!"
+            exit 1
+          fi
+
+  # Job 2: Test PostgreSQL TCP Relay
+  test-pg-relay:
+    runs-on: ubuntu-latest
+    name: PostgreSQL TCP Relay Verification
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Build local tailsacle-cli
+        run: |
+          npm ci
+          npm run check
+          npm run build
+
+      - name: Start target PostgreSQL server (Port 15432)
+        run: |
+          docker run -d --name pg-target-matrix \
+            -e POSTGRES_USER=testuser \
+            -e POSTGRES_PASSWORD=testpass123 \
+            -e POSTGRES_DB=testdb \
+            -p 127.0.0.1:15432:5432 \
+            postgres:16-alpine
+          for i in $(seq 1 60); do
+            if docker exec pg-target-matrix psql -U testuser -d testdb -c "SELECT 1" > /dev/null 2>&1; then
+              echo "PostgreSQL target ready on 127.0.0.1:15432"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Seed data in PostgreSQL target
+        run: |
+          docker exec -i pg-target-matrix psql -U testuser -d testdb <<'SQL'
+          CREATE TABLE IF NOT EXISTS matrix_test (id serial primary key, val text);
+          INSERT INTO matrix_test (val) VALUES ('relay_pg_ok');
+          SQL
+
+      - name: Start tailsacle-cli TCP Relay (Listen 5432 -> Target 15432)
+        run: |
+          node dist/cli.js relay --listen 5432 --target 127.0.0.1:15432 &
+          sleep 2
+
+      - name: Verify PostgreSQL communication through Relay
+        run: |
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+          PGPASSWORD=testpass123 psql -h 127.0.0.1 -p 5432 -U testuser -d testdb -c "SELECT * FROM matrix_test;"
+          echo "✅ SUCCESS: PostgreSQL TCP Relay query succeeded!"
+
+  # Job 3: Integration with Tailnet Serve & Funnel
+  test-tailnet-integration:
+    needs: [test-http-relay, test-pg-relay]
+    runs-on: ubuntu-latest
+    name: Tailnet Serve & Funnel Integration
+    timeout-minutes: 200
+    env:
+      TS_CLIENT_SECRET: ${{ secrets.TS_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Build & Link tailsacle-cli
+        run: |
+          npm ci
+          npm run build
+          npm link
+
+      - name: Start Target PostgreSQL (Port 15432)
+        run: |
+          docker run -d --name pg-tailnet \
+            -e POSTGRES_USER=remoteuser \
+            -e POSTGRES_PASSWORD=remotepass123 \
+            -e POSTGRES_DB=remotedb \
+            -p 127.0.0.1:15432:5432 \
+            postgres:16-alpine
+          for i in $(seq 1 60); do
+            if docker exec pg-tailnet psql -U remoteuser -d remotedb -c "SELECT 1" > /dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec -i pg-tailnet psql -U remoteuser -d remotedb <<'SQL'
+          CREATE TABLE IF NOT EXISTS live_demo (id serial primary key, note text);
+          INSERT INTO live_demo (note) VALUES ('Ready for Tailnet and Funnel access!');
+          SQL
+
+      - name: Start TCP Relay (Listen 5432 -> Target 15432)
+        run: |
+          tailsacle-cli relay --listen 5432 --target 127.0.0.1:15432 &
+          sleep 2
+
+      - name: Join Tailnet (tailsacle-cli up)
+        if: env.TS_CLIENT_SECRET != ''
+        run: tailsacle-cli up --yes --apply-policy --no-ssh --json
+
+      - name: Configure Tailscale Serve (Internal TCP Port 5432)
+        if: env.TS_CLIENT_SECRET != ''
+        run: |
+          tailsacle-cli serve "tcp://127.0.0.1:5432" --tcp 5432 --json
+
+      - name: Configure Tailscale Funnel (Public TCP Port 10000)
+        if: env.TS_CLIENT_SECRET != '' && inputs.enable_funnel == 'true'
+        run: |
+          tailsacle-cli funnel --tcp 10000:5432 --yes --apply-policy --enable-https --json
+
+      - name: Retrieve Tailnet IP and Domain
+        if: env.TS_CLIENT_SECRET != ''
+        id: status
+        run: |
+          tailsacle-cli status --json > /tmp/status.json
+          node - <<'NODE'
+          const fs = require("fs");
+          const raw = JSON.parse(fs.readFileSync("/tmp/status.json", "utf8"));
+          const status = raw.resolved ?? raw;
+          const self = status.Self ?? {};
+          const ip = (self.TailscaleIPs ?? []).find((v) => v.startsWith("100."));
+          const dns = String(self.DNSName ?? "").replace(/\.$/, "");
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `ip=${ip ?? ""}\ndns=${dns ?? ""}\n`);
+          NODE
+
+      - name: Summary & Keep Alive
+        if: env.TS_CLIENT_SECRET != ''
+        env:
+          IP: ${{ steps.status.outputs.ip }}
+          DNS: ${{ steps.status.outputs.dns }}
+          ENABLE_FUNNEL: ${{ inputs.enable_funnel }}
+          DURATION: ${{ inputs.duration_minutes }}
+        run: |
+          {
+            echo "## 🚀 Tailscale Relay & Serve/Funnel — Access Information"
+            echo ""
+            echo "### 1. Truy cập NỘI BỘ mạng Tailscale (qua Serve TCP 5432):"
+            echo '```bash'
+            echo "# Kết nối bằng IP Tailnet:"
+            echo "psql \"host=${IP} port=5432 user=remoteuser password=remotepass123 dbname=remotedb\""
+            echo "# Kết nối bằng MagicDNS:"
+            echo "psql \"host=${DNS} port=5432 user=remoteuser password=remotepass123 dbname=remotedb\""
+            echo '```'
+            echo ""
+            if [ "$ENABLE_FUNNEL" = "true" ]; then
+              echo "### 2. Truy cập CÔNG KHAI ngoài Internet (qua Funnel TCP 10000):"
+              echo '```bash'
+              echo "psql \"host=${DNS} port=10000 user=remoteuser password=remotepass123 dbname=remotedb\""
+              echo '```'
+            fi
+            echo ""
+            echo "⏳ Giữ trạm trung chuyển sống trong ~${DURATION} phút..."
+          } > "$GITHUB_STEP_SUMMARY"
+          sleep "$((DURATION * 60))"
