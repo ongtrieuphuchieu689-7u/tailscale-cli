@@ -1,6 +1,15 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, watchFile } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  watchFile,
+  writeFileSync,
+} from "node:fs";
 import { join as joinPath } from "node:path";
+import { createRequire } from "node:module";
 import { cliEntrypoint, nodeExecutable } from "./linux.js";
 import { registryAdd, registryRemove, registryList } from "./registry.js";
 import { maskEnv } from "./config.js";
@@ -14,24 +23,32 @@ import type {
   ServiceStatus,
 } from "./types.js";
 
-let nodeWindowsModule: typeof import("node-windows") | undefined;
+const require = createRequire(import.meta.url);
 
-async function loadNodeWindows(): Promise<typeof import("node-windows")> {
-  if (nodeWindowsModule) return nodeWindowsModule;
+function loadWinSwBinary(): { exe: string; config: string } {
   if (process.platform !== "win32") {
     throw new Error(
       "SERVICE_PLATFORM_UNSUPPORTED: Windows service manager requires win32",
     );
   }
   try {
-    nodeWindowsModule = await import("node-windows");
-    return nodeWindowsModule;
+    const pkgRoot = dirname(require.resolve("node-windows/package.json"));
+    const exe = joinPath(pkgRoot, "bin", "winsw", "winsw.exe");
+    const cfg = joinPath(pkgRoot, "bin", "winsw", "winsw.exe.config");
+    if (!existsSync(exe)) {
+      throw new Error(`winsw.exe not found at ${exe}`);
+    }
+    return { exe, config: cfg };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
       `SERVICE_WINDOWS_NATIVE_REQUIRED: node-windows is unavailable (${detail}); install tailsacle-cli with its dependencies or use "service install --scheduler" (Task Scheduler, no admin needed)`,
     );
   }
+}
+
+function dirname(p: string): string {
+  return p.split(/[\\/]/).slice(0, -1).join("/");
 }
 
 function windowsServiceDir(name: string): string {
@@ -96,10 +113,13 @@ export function renderWinSwXml(
   const execArgs = config.script
     ? [config.script, ...config.args]
     : [opts.cliPath, ...config.args];
+  const argLines = execArgs
+    .map((a) => `  <argument>${xmlEscape(a)}</argument>`)
+    .join("\n");
   const envLines = Object.entries(config.env)
     .map(
       ([key, value]) =>
-        `    <env name="${xmlEscape(key)}" value="${xmlEscape(value)}" />`,
+        `  <env name="${xmlEscape(key)}" value="${xmlEscape(value)}" />`,
     )
     .join("\n");
   return `<service>
@@ -107,11 +127,14 @@ export function renderWinSwXml(
   <name>${xmlEscape(config.name)}</name>
   <description>${xmlEscape(config.description ?? "")}</description>
   <executable>${xmlEscape(opts.nodePath)}</executable>
-  <arguments>${xmlEscape(execArgs.join(" "))}</arguments>
+${argLines}
   <workingdirectory>${xmlEscape(config.workingDir)}</workingdirectory>
   <logpath>${xmlEscape(config.log?.dir ?? joinPath(windowsServiceDir(config.name), "logs"))}</logpath>
-  <log mode="roll-by-size" sizeThreshold="${config.log?.maxSizeMb ?? 10}" keepFiles="${config.log?.keepFiles ?? 5}" />
-  <onfailure action="restart" delay="${config.restart.delaySeconds * 1000}" />
+  <log mode="roll-by-size">
+    <sizeThreshold>${(config.log?.maxSizeMb ?? 10) * 1024}</sizeThreshold>
+    <keepFiles>${config.log?.keepFiles ?? 5}</keepFiles>
+  </log>
+  <onfailure action="restart" delay="${config.restart.delaySeconds} sec" />
   <resetfailure>1 hour</resetfailure>
 ${envLines ? `${envLines}\n` : ""}</service>
 `;
@@ -120,6 +143,23 @@ ${envLines ? `${envLines}\n` : ""}</service>
 function scQuery(name: string): string {
   const result = spawnSync("sc", ["query", name], { encoding: "utf8" });
   return result.status === 0 ? (result.stdout ?? "") : "";
+}
+
+function runWinSw(
+  exePath: string,
+  args: string[],
+  errorCode: string,
+  tolerateFailure = false,
+): void {
+  const result = spawnSync(exePath, args, { encoding: "utf8" });
+  if (result.status !== 0 && !tolerateFailure) {
+    const stderr = (result.stderr ?? result.stdout ?? "").trim();
+    throw new Error(
+      `${errorCode}: ${exePath} ${args.join(" ")} failed${
+        stderr ? `: ${stderr}` : ""
+      }`,
+    );
+  }
 }
 
 export function parseScStatus(name: string, output: string): ServiceStatus {
@@ -146,34 +186,23 @@ export class WindowsServiceManager implements ServiceManager {
   ): Promise<ServiceInstallResult> {
     const serviceDir = windowsServiceDir(config.name);
     mkdirSync(serviceDir, { recursive: true });
-    const nw = await loadNodeWindows();
+    const winsw = loadWinSwBinary();
     const cliPath = cliEntrypoint();
     const nodePath = nodeExecutable();
     const logDir = config.log?.dir ?? joinPath(serviceDir, "logs");
-    const svc = new nw.Service({
-      name: config.name,
-      description: config.description ?? "",
-      script: cliPath,
-      scriptOptions: config.args.join(" "),
-      workingdir: config.workingDir,
-      env: Object.entries(config.env).map(([key, value]) => ({
-        name: key,
-        value,
-      })),
-      logpath: logDir,
-      maxLogSizeInKb: (config.log?.maxSizeMb ?? 10) * 1024,
-      logMode: "roll",
-      nodeOptions: "",
-      wait: 2,
-      grow: 0.25,
-    });
-    await new Promise<void>((resolve, reject) => {
-      svc.on("install", () => resolve());
-      svc.on("error", (error: Error) =>
-        reject(new Error(`SERVICE_WINDOWS_INSTALL_FAILED: ${error.message}`)),
-      );
-      svc.install();
-    });
+    mkdirSync(logDir, { recursive: true });
+    const exePath = joinPath(serviceDir, `${config.name}.exe`);
+    const xmlPath = joinPath(serviceDir, `${config.name}.xml`);
+    copyFileSync(winsw.exe, exePath);
+    copyFileSync(winsw.config, `${exePath}.config`);
+    writeFileSync(
+      xmlPath,
+      renderWinSwXml(config, { nodePath, cliPath }),
+      "utf8",
+    );
+    runWinSw(exePath, ["install"], `SERVICE_WINDOWS_INSTALL_FAILED`);
+    runWinSw(exePath, ["start"], `SERVICE_WINDOWS_START_FAILED`, true);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
     const status = await this.status(config.name);
     const info: ServiceInfo = {
       name: config.name,
@@ -202,40 +231,34 @@ export class WindowsServiceManager implements ServiceManager {
     if (!info) {
       throw new Error(`SERVICE_NOT_FOUND: service "${name}" is not registered`);
     }
-    const nw = await loadNodeWindows();
-    const svc = new nw.Service({ name });
-    await new Promise<void>((resolve, reject) => {
-      svc.on("uninstall", () => resolve());
-      svc.on("error", (error: Error) =>
-        reject(new Error(`SERVICE_WINDOWS_UNINSTALL_FAILED: ${error.message}`)),
+    const serviceDir = info.unitPath ?? windowsServiceDir(name);
+    const exePath = joinPath(serviceDir, `${name}.exe`);
+    if (existsSync(exePath)) {
+      runWinSw(
+        exePath,
+        ["uninstall"],
+        `SERVICE_WINDOWS_UNINSTALL_FAILED`,
+        true,
       );
-      svc.uninstall();
-    });
+    }
+    rmSync(serviceDir, { recursive: true, force: true });
     await registryRemove(name);
   }
 
   async start(name: string): Promise<void> {
-    const nw = await loadNodeWindows();
-    const svc = new nw.Service({ name });
-    await new Promise<void>((resolve, reject) => {
-      svc.on("start", () => resolve());
-      svc.on("error", (error: Error) =>
-        reject(new Error(`SERVICE_WINDOWS_START_FAILED: ${error.message}`)),
+    const result = spawnSync("sc", ["start", name], { encoding: "utf8" });
+    if (result.status !== 0) {
+      const stderr = (result.stderr ?? "").trim();
+      throw new Error(
+        `SERVICE_WINDOWS_START_FAILED: sc start ${name} failed${
+          stderr ? `: ${stderr}` : ""
+        }`,
       );
-      svc.start();
-    });
+    }
   }
 
   async stop(name: string): Promise<void> {
-    const nw = await loadNodeWindows();
-    const svc = new nw.Service({ name });
-    await new Promise<void>((resolve, reject) => {
-      svc.on("stop", () => resolve());
-      svc.on("error", (error: Error) =>
-        reject(new Error(`SERVICE_WINDOWS_STOP_FAILED: ${error.message}`)),
-      );
-      svc.stop();
-    });
+    spawnSync("sc", ["stop", name], { encoding: "utf8" });
   }
 
   async restart(name: string): Promise<void> {

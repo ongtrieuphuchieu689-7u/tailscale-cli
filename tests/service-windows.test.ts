@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, readFileSync } from "node:fs";
 
 const mockSpawnSync = vi.fn();
 
@@ -57,13 +57,14 @@ describe("windows service manager", () => {
     expect(xml).toContain("<service>");
     expect(xml).toContain("<id>win-relay</id>");
     expect(xml).toContain("<executable>C:\\node\\node.exe</executable>");
-    expect(xml).toContain(
-      "<arguments>C:\\cli\\cli.js relay --listen 18888</arguments>",
-    );
+    expect(xml).toContain("<argument>C:\\cli\\cli.js</argument>");
+    expect(xml).toContain("<argument>relay</argument>");
+    expect(xml).toContain("<argument>--listen</argument>");
+    expect(xml).toContain("<argument>18888</argument>");
     expect(xml).toContain('<env name="A" value="1" />');
     expect(xml).toContain("<logpath>C:\\logs</logpath>");
-    expect(xml).toContain('sizeThreshold="10"');
-    expect(xml).toContain('delay="5000"');
+    expect(xml).toContain("<sizeThreshold>10240</sizeThreshold>");
+    expect(xml).toContain('delay="5 sec"');
   });
 
   it("escapes XML special characters", () => {
@@ -82,13 +83,14 @@ describe("windows service manager", () => {
     expect(xml).toContain('<env name="a&gt;1" value="x&quot;y" />');
   });
 
-  it("B4-2 config passes script and args to the node-windows service", () => {
-    expect(
-      renderWinSwXml(config(), {
-        nodePath: "C:\\node.exe",
-        cliPath: "C:\\cli.js",
-      }),
-    ).toContain("relay --listen 18888");
+  it("B4-2 config passes script and args to the service XML", () => {
+    const xml = renderWinSwXml(config(), {
+      nodePath: "C:\\node.exe",
+      cliPath: "C:\\cli.js",
+    });
+    expect(xml).toContain("<argument>C:\\cli.js</argument>");
+    expect(xml).toContain("<argument>relay</argument>");
+    expect(xml).toContain("<argument>18888</argument>");
   });
 
   it("B4-4 log dir is set in the WinSW XML", () => {
@@ -147,17 +149,57 @@ describe("windows service manager", () => {
     await expect(manager.status("ghost")).rejects.toThrow(/SERVICE_NOT_FOUND/);
   });
 
-  it.skipIf(process.platform === "win32")(
-    "install fails cleanly when node-windows is unavailable",
-    async () => {
-      vi.stubGlobal("process", { ...process, platform: "win32" });
-      vi.doUnmock("node-windows");
-      const { WindowsServiceManager } =
-        await import("../src/service/windows.js");
-      const manager = new WindowsServiceManager();
-      await expect(manager.install(config())).rejects.toThrow(
-        /SERVICE_WINDOWS_NATIVE_REQUIRED|MODULE_NOT_FOUND|Cannot find module/,
-      );
-    },
-  );
+  it("install fails cleanly when node-windows is unavailable", async () => {
+    vi.stubGlobal("process", { ...process, platform: "win32" });
+    vi.doMock("node:module", () => ({
+      createRequire: () => ({
+        resolve: () => {
+          throw new Error("Cannot find package 'node-windows'");
+        },
+      }),
+    }));
+    vi.resetModules();
+    const { WindowsServiceManager } = await import("../src/service/windows.js");
+    const manager = new WindowsServiceManager();
+    await expect(manager.install(config())).rejects.toThrow(
+      /SERVICE_WINDOWS_NATIVE_REQUIRED/,
+    );
+  });
+
+  it("install drives winsw directly and registers the service", async () => {
+    const tmpProgramData = `${process.cwd()}/.tmp-programdata-test`;
+    rmSync(tmpProgramData, { recursive: true, force: true });
+    vi.doUnmock("node:module");
+    vi.resetModules();
+    vi.stubGlobal("process", { ...process, platform: "win32" });
+    vi.stubEnv("ProgramData", tmpProgramData);
+    mockSpawnSync.mockImplementation((cmd: string) => {
+      if (String(cmd).endsWith(".exe")) {
+        return { status: 0, stdout: "installed", stderr: "" };
+      }
+      if (cmd === "sc") {
+        return {
+          status: 0,
+          stdout: "STATE              : 4  RUNNING",
+          stderr: "",
+        };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    });
+    const { WindowsServiceManager } = await import("../src/service/windows.js");
+    const manager = new WindowsServiceManager();
+    const result = await manager.install(config());
+    expect(result.installed).toBe(true);
+    expect(result.status).toBe("running");
+    const winswCalls = mockSpawnSync.mock.calls.filter((c) =>
+      String(c[0]).endsWith(".exe"),
+    );
+    expect(winswCalls.map((c) => c[1])).toEqual([["install"], ["start"]]);
+    const xmlPath = `${tmpProgramData}/tailsacle-cli/services/win-relay/win-relay.xml`;
+    expect(existsSync(xmlPath)).toBe(true);
+    expect(readFileSync(xmlPath, "utf8")).toContain(
+      "<argument>relay</argument>",
+    );
+    rmSync(tmpProgramData, { recursive: true, force: true });
+  });
 });
