@@ -66,7 +66,7 @@ jobs:
 
       - name: Seed test data
         run: |
-          docker exec pgtest psql -U testuser -d testdb <<'SQL'
+          docker exec -i pgtest psql -U testuser -d testdb <<'SQL'
           CREATE TABLE IF NOT EXISTS echo (
             id serial PRIMARY KEY,
             msg text NOT NULL,
