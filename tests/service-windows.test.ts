@@ -147,13 +147,17 @@ describe("windows service manager", () => {
     await expect(manager.status("ghost")).rejects.toThrow(/SERVICE_NOT_FOUND/);
   });
 
-  it("install fails cleanly when node-windows is unavailable", async () => {
-    vi.stubGlobal("process", { ...process, platform: "win32" });
-    vi.doUnmock("node-windows");
-    const { WindowsServiceManager } = await import("../src/service/windows.js");
-    const manager = new WindowsServiceManager();
-    await expect(manager.install(config())).rejects.toThrow(
-      /SERVICE_WINDOWS_NATIVE_REQUIRED|MODULE_NOT_FOUND|Cannot find module/,
-    );
-  });
+  it.skipIf(process.platform === "win32")(
+    "install fails cleanly when node-windows is unavailable",
+    async () => {
+      vi.stubGlobal("process", { ...process, platform: "win32" });
+      vi.doUnmock("node-windows");
+      const { WindowsServiceManager } =
+        await import("../src/service/windows.js");
+      const manager = new WindowsServiceManager();
+      await expect(manager.install(config())).rejects.toThrow(
+        /SERVICE_WINDOWS_NATIVE_REQUIRED|MODULE_NOT_FOUND|Cannot find module/,
+      );
+    },
+  );
 });

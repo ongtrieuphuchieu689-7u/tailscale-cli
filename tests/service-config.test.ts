@@ -46,13 +46,14 @@ describe("service config", () => {
 
   it("B1-2 loads JSONC with comments and trailing commas", () => {
     const path = `${tmpDir}/jsonc.jsonc`;
+    const jsonSafeDir = tmpDir.replaceAll("\\", "/");
     writeFileSync(
       path,
       [
         "// comment line",
         "{",
         '  "name": "my-relay", // trailing comment',
-        '  "workingDir": "' + tmpDir + '",',
+        '  "workingDir": "' + jsonSafeDir + '",',
         '  "args": ["relay", "--listen", "18888",],',
         "}",
       ].join("\n"),

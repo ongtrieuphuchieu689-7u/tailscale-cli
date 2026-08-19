@@ -54,6 +54,8 @@ import {
   resolveUserName,
 } from "./service/config.js";
 import { getServiceManager, getSchedulerManager } from "./service/index.js";
+import type { ServiceManager } from "./service/types.js";
+import { registryFind } from "./service/registry.js";
 import { listeningPortsLinux, lingerEnabled } from "./service/linux.js";
 import { confirm, promptCredential } from "./interactive.js";
 import { verifyEndpointReachable } from "./verify.js";
@@ -1666,6 +1668,17 @@ serviceCmd
     }
   });
 
+function managerForService(name: string): ServiceManager {
+  const entry = registryFind(name);
+  if (
+    entry?.platform === "win32" &&
+    entry.unitPath?.startsWith("tailsacle-cli\\")
+  ) {
+    return getSchedulerManager();
+  }
+  return getServiceManager();
+}
+
 serviceCmd
   .command("install")
   .description(
@@ -1817,7 +1830,7 @@ serviceCmd
           "SERVICE_CONFIRMATION_REQUIRED: pass --yes to uninstall without confirmation",
         );
       }
-      const manager = getServiceManager();
+      const manager = managerForService(options.name);
       await manager.uninstall(options.name);
       serviceLog("OK", `Service "${options.name}" uninstalled`);
       emit(
@@ -1840,7 +1853,7 @@ serviceCmd
   .action(async (options: { name: string }) => {
     const start = performance.now();
     try {
-      const manager = getServiceManager();
+      const manager = managerForService(options.name);
       const status = await manager.status(options.name);
       serviceLog(
         "INFO",
@@ -1868,7 +1881,7 @@ serviceCmd
     async (options: { name: string; lines: string; follow?: boolean }) => {
       const start = performance.now();
       try {
-        const manager = getServiceManager();
+        const manager = managerForService(options.name);
         const lines = Number(options.lines);
         if (!Number.isFinite(lines) || lines < 1) {
           throw new Error(
@@ -1902,7 +1915,7 @@ serviceCmd
   .action(async (options: { name: string }) => {
     const start = performance.now();
     try {
-      const manager = getServiceManager();
+      const manager = managerForService(options.name);
       await manager.start(options.name);
       const status = await manager.status(options.name);
       serviceLog("OK", `Service "${options.name}" started`);
@@ -1926,7 +1939,7 @@ serviceCmd
   .action(async (options: { name: string }) => {
     const start = performance.now();
     try {
-      const manager = getServiceManager();
+      const manager = managerForService(options.name);
       await manager.stop(options.name);
       const status = await manager.status(options.name);
       serviceLog("OK", `Service "${options.name}" stopped`);
@@ -1950,7 +1963,7 @@ serviceCmd
   .action(async (options: { name: string }) => {
     const start = performance.now();
     try {
-      const manager = getServiceManager();
+      const manager = managerForService(options.name);
       await manager.restart(options.name);
       const status = await manager.status(options.name);
       serviceLog("OK", `Service "${options.name}" restarted`);
