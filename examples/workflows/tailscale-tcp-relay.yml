@@ -38,6 +38,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Build & verify local tailsacle-cli
         run: |
@@ -81,10 +83,9 @@ jobs:
 
       - name: Verify PostgreSQL connection through TCP relay
         run: |
-          # Install psql client locally on runner
-          sudo apt-get update && sudo apt-get install -y postgresql-client
-          # Query Postgres through relay listen port
-          PGPASSWORD=pgtest123 psql -h 127.0.0.1 -p ${{ inputs.relay_listen_port }} -U testuser -d testdb -c "SELECT * FROM relay_test;"
+          # Query Postgres through relay listen port (psql from the already-pulled postgres image)
+          docker run --rm --network host -e PGPASSWORD=pgtest123 postgres:16-alpine \
+            psql -h 127.0.0.1 -p ${{ inputs.relay_listen_port }} -U testuser -d testdb -c "SELECT * FROM relay_test;"
           echo "=== RELAY TEST VERIFIED LOCALLY ==="
 
       - name: Join the tailnet (tailsacle-cli up)

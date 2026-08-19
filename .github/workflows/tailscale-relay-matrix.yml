@@ -35,6 +35,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Build local tailsacle-cli
         run: |
@@ -79,6 +81,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Build local tailsacle-cli
         run: |
@@ -116,8 +120,8 @@ jobs:
 
       - name: Verify PostgreSQL communication through Relay
         run: |
-          sudo apt-get update && sudo apt-get install -y postgresql-client
-          PGPASSWORD=pgtest123 psql -h 127.0.0.1 -p 5432 -U testuser -d testdb -c "SELECT * FROM matrix_test;"
+          docker run --rm --network host -e PGPASSWORD=pgtest123 postgres:16-alpine \
+            psql -h 127.0.0.1 -p 5432 -U testuser -d testdb -c "SELECT * FROM matrix_test;"
           echo "✅ SUCCESS: PostgreSQL TCP Relay query succeeded!"
 
   # Job 3: Integration with Tailnet Serve & Funnel
@@ -133,6 +137,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Build & Link tailsacle-cli
         run: |
