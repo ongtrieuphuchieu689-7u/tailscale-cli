@@ -83,6 +83,8 @@ function tailscaleEnv(): NodeJS.ProcessEnv {
       fileEnv.TS_TAGS = config.tags.join(",");
     if (config.credentialEnv && !env.TS_CREDENTIAL_ENV)
       fileEnv.TS_CREDENTIAL_ENV = config.credentialEnv;
+    if (config.clientSecret && !env.TS_CLIENT_SECRET)
+      fileEnv.TS_CLIENT_SECRET = config.clientSecret;
     if (config.tagOwner?.length && !env.TS_TAG_OWNER)
       fileEnv.TS_TAG_OWNER = config.tagOwner.join(",");
     env = fileEnv;

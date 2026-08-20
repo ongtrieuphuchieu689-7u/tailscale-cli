@@ -1,3 +1,4 @@
+tailscale-cli.config.json
 node_modules
 dist
 coverage

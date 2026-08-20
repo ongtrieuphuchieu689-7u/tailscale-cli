@@ -113,6 +113,7 @@ interface ConfigFile {
   acceptRoutes?: boolean;
   cleanupAfter?: number;
   credentialEnv?: string;
+  clientSecret?: string;
   tagOwner?: string[];
 }
 
@@ -131,8 +132,10 @@ export function loadConfigFile(
       const cleaned = raw
         .replace(/\/\/[^\n]*/g, "")
         .replace(/,\s*([\]}])/g, "$1");
-      const parsed = JSON.parse(cleaned) as ConfigFile;
-      return { config: parsed, source: candidate };
+      const parsed = JSON.parse(cleaned) as Record<string, unknown>;
+      if (!parsed.clientSecret && typeof parsed.TS_CLIENT_SECRET === "string")
+        parsed.clientSecret = parsed.TS_CLIENT_SECRET;
+      return { config: parsed as ConfigFile, source: candidate };
     } catch {
       // File not found or invalid; try next.
     }
