@@ -71,10 +71,12 @@ describe("nexql-mcp helpers", () => {
   });
 
   it("should spawn nexql-mcp and expose waitForExit for supervisor respawn", async () => {
-    // Use a real reachable runner via npx; the DB target port is intentionally
-    // unreachable, so startNexqlMcpHttp must fail fast without leaving the
-    // HTTP port bound. This validates the fail-fast + waitForExit contract the
-    // relay-mcp-postgres supervisor relies on.
+    // Use a real reachable runner via npx; the DB target port is
+    // intentionally unreachable, so startNexqlMcpHttp must fail fast
+    // without leaving the HTTP port bound. This validates the fail-fast +
+    // waitForExit contract the relay-mcp-postgres supervisor relies on.
+    // readyTimeoutMs stays below the test timeout so a slow npx cold-cache
+    // resolution on CI runners cannot turn this into a 5000ms-vs-5000ms race.
     const runner: NexqlMcpRunner = {
       kind: "npx",
       command: ["npx", "-y", "nexql-mcp"],
@@ -91,12 +93,12 @@ describe("nexql-mcp helpers", () => {
           httpPort: 0,
           token: "tok",
           logPath,
-          readyTimeoutMs: 5_000,
+          readyTimeoutMs: 3_000,
         }),
       ).rejects.toThrow(/NEXQL_MCP_EXITED_EARLY|NEXQL_MCP_SERVE_FAILED/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
       void server;
     }
-  });
+  }, 20_000);
 });
