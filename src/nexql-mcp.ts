@@ -267,6 +267,7 @@ export async function startNexqlMcpHttp(options: {
   httpPort: number;
   token: string;
   logPath: string;
+  bind?: string;
   env?: NodeJS.ProcessEnv;
   readyTimeoutMs?: number;
 }): Promise<{
@@ -288,6 +289,7 @@ export async function startNexqlMcpHttp(options: {
     "--http",
     "--http-port",
     String(httpPort),
+    ...(options.bind ? ["--bind", options.bind] : []),
   ];
   const command = [runner.command[0]!, ...args];
   const logDir = dirname(logPath);

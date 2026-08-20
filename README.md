@@ -167,7 +167,7 @@ Chạy relay tới PostgreSQL và đồng thời mở MCP HTTP endpoint để ag
 # Relay local :15433 -> Postgres 192.168.50.79:5433, MCP HTTP trên :8787
 PGPASSWORD=*** npx tailsacle-cli relay-mcp-postgres \
   --map 15433:192.168.50.79:5433 --map 15434:192.168.50.79:5434 \
-  --mcp-port 8787 --token "$MCP_TOKEN" --database postgres
+  --mcp-port 8787 --mcp-bind 0.0.0.0 --token "$MCP_TOKEN" --database postgres
 ```
 Bảo mật: password DB chỉ đi qua `--password`/`PGPASSWORD`/`TS_PGPASSWORD` vào env `PGPASSWORD` của child; token MCP đi qua `NEXQL_MCP_HTTP_TOKEN` hoặc `--token`; output và pidfile luôn mask. **Luôn chạy**: MCP server không thoát khi máy Postgres chưa bật — supervisor respawn mỗi `--db-retry-interval` ms (mặc định 5000) cho tới khi DB kết nối được; nếu DB chết giữa chừng rồi quay lại, MCP tự phục hồi. **Giới hạn**: `setup_connection` chỉ target được các port đã khai báo relay sẵn (`--map`/`--file`/`--listen`) — agent không tự mở port mới runtime.
 

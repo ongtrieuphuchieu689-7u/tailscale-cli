@@ -1550,6 +1550,11 @@ program
     "8787",
   )
   .option(
+    "--mcp-bind <address>",
+    "HTTP MCP bind address for nexql-mcp (default: 127.0.0.1; use 0.0.0.0 to expose over the tailnet)",
+    "127.0.0.1",
+  )
+  .option(
     "--token <token>",
     "HTTP MCP bearer token (auto-generated when omitted; also reads NEXQL_MCP_HTTP_TOKEN)",
   )
@@ -1595,6 +1600,7 @@ program
       host?: string;
       targetHost?: string;
       mcpPort?: string;
+      mcpBind?: string;
       token?: string;
       user?: string;
       password?: string;
@@ -1671,6 +1677,12 @@ program
         if (!Number.isFinite(mcpPort) || mcpPort <= 0 || mcpPort > 65535) {
           throw new Error(
             `NEXQL_MCP_PORT_INVALID: --mcp-port must be a valid port number (1-65535), got ${options.mcpPort}`,
+          );
+        }
+        const mcpBind = options.mcpBind?.trim() || "127.0.0.1";
+        if (!/^[\w.*:\[\]-]+$/.test(mcpBind)) {
+          throw new Error(
+            `NEXQL_MCP_BIND_INVALID: --mcp-bind must be a valid IP/host, got ${options.mcpBind}`,
           );
         }
         const dbRetryInterval = Number(options.dbRetryInterval ?? 5_000);
@@ -1776,6 +1788,7 @@ program
               runner,
               connectionString,
               httpPort: mcpPort,
+              bind: mcpBind,
               token,
               logPath,
               readyTimeoutMs: mcpReadyTimeout,
@@ -1830,7 +1843,7 @@ program
             relayCount: mappings.length,
             mappings,
             primaryDatabase: options.database,
-            mcpHttpUrl: `http://127.0.0.1:${mcpPort}/mcp`,
+            mcpHttpUrl: `http://${mcpBind === "0.0.0.0" ? "0.0.0.0" : mcpBind}:${mcpPort}/mcp`,
             mcpToken: maskToken(token),
             connectionString: maskConnString(connectionString),
             nexqlMcpPid: nexqlPid ?? null,

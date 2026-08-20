@@ -314,6 +314,7 @@ export const manifest = {
         ["--host <address>"],
         ["--target-host <address>"],
         ["--mcp-port <port>"],
+        ["--mcp-bind <address>"],
         ["--token <token>"],
         ["--user <user>"],
         ["--password <password>"],

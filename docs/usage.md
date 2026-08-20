@@ -55,8 +55,9 @@ Policy writes require a fetched remote policy, diff, remote validation, local ba
   # Relay local :15433 -> Postgres 192.168.50.79:5433, MCP HTTP on :8787
   PGPASSWORD=*** tailsacle-cli relay-mcp-postgres \
     --map 15433:192.168.50.79:5433 --map 15434:192.168.50.79:5434 \
-    --mcp-port 8787 --token "$MCP_TOKEN" --database postgres
+    --mcp-port 8787 --mcp-bind 0.0.0.0 --token "$MCP_TOKEN" --database postgres
   ```
+  `--mcp-bind` (default `127.0.0.1`) controls the nexql-mcp HTTP bind address — use `0.0.0.0` so the MCP endpoint is reachable over the tailnet (e.g. from an agent on another machine).
   Secrets never appear in argv/process listings: the DB password travels via `--password`/`PGPASSWORD`/`TS_PGPASSWORD` into the child's `PGPASSWORD` env, and the MCP bearer token via `NEXQL_MCP_HTTP_TOKEN` (or `--token`). Output masks both (`mcpToken`, `connectionString`). An ephemeral token is auto-generated when none is provided. The command **keeps the MCP server alive even when the PostgreSQL machine is down or not yet booted**: a supervisor spawns nexql-mcp and respawns it every `--db-retry-interval` ms (default 5000) until the database accepts connections; if the DB dies mid-flight and comes back, the MCP endpoint recovers automatically. `nexql-mcp` itself exits when the database is unreachable, so the supervisor only reports readiness once a real connection succeeds. **Important:** `setup_connection` can only target ports that are already relayed via `--map`/`--file`/`--listen` — the agent cannot open new relay ports at runtime; declare every port it may need up front. A pidfile (`nexql-mcp.pid.json` in the binary cache) tracks the spawned server; `SIGINT`/`SIGTERM` stops it, and connection strings/pidfile commands are masked.
 - `dns --enable-magicdns --yes` enables MagicDNS on the tailnet; `dns --enable-magicdns --dry-run` previews the action without applying; plain `dns` reads nameservers/preferences/search paths.
 - Custom `TS_TAILNET` domains (not `*.ts.net`) emit a warning because Funnel DNS and HTTPS rely on a Tailscale-hosted domain.
