@@ -286,30 +286,62 @@ describe("resolveTags auto-tagging", () => {
   });
 
   it("derives deterministic tag when tags are empty even in dev profile when ssh is false", () => {
-    const res = resolveTags({
-      ...readinessConfig,
-      ssh: false,
-      profile: "dev",
-      tags: [],
-      hostname: "my-dev-box",
-    });
-    expect(res).toEqual({ tags: ["tag:my-dev-box"], autoTagged: true });
+    vi.stubEnv("GITHUB_REPOSITORY", "");
+    vi.stubEnv("GITLAB_PROJECT_PATH", "");
+    vi.stubEnv("CI_PROJECT_PATH", "");
+    vi.stubEnv("TS_TAG_BASE", "");
+    try {
+      const res = resolveTags({
+        ...readinessConfig,
+        ssh: false,
+        profile: "dev",
+        tags: [],
+        hostname: "my-dev-box",
+      });
+      expect(res).toEqual({ tags: ["tag:my-dev-box"], autoTagged: true });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("automatically appends tag:sshWhoami-<username> when ssh is true", () => {
-    const userSlug =
-      currentUsername()
-        .toLowerCase()
-        .replace(/[^a-z0-9-]+/g, "-")
-        .replace(/^-+|-+$/g, "") || "user";
-    const res = resolveTags({
-      ...readinessConfig,
-      ssh: true,
-      profile: "dev",
-      tags: [],
-      hostname: "my-dev-box",
-    });
-    expect(res.tags).toEqual(["tag:my-dev-box", `tag:sshWhoami-${userSlug}`]);
-    expect(res.autoTagged).toBe(true);
+    vi.stubEnv("GITHUB_REPOSITORY", "");
+    vi.stubEnv("GITLAB_PROJECT_PATH", "");
+    vi.stubEnv("CI_PROJECT_PATH", "");
+    vi.stubEnv("TS_TAG_BASE", "");
+    try {
+      const userSlug =
+        currentUsername()
+          .toLowerCase()
+          .replace(/[^a-z0-9-]+/g, "-")
+          .replace(/^-+|-+$/g, "") || "user";
+      const res = resolveTags({
+        ...readinessConfig,
+        ssh: true,
+        profile: "dev",
+        tags: [],
+        hostname: "my-dev-box",
+      });
+      expect(res.tags).toEqual(["tag:my-dev-box", `tag:sshWhoami-${userSlug}`]);
+      expect(res.autoTagged).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("derives tag from GITHUB_REPOSITORY when present in environment", () => {
+    vi.stubEnv("GITHUB_REPOSITORY", "my-org/my-repo");
+    try {
+      const res = resolveTags({
+        ...readinessConfig,
+        ssh: false,
+        profile: "dev",
+        tags: [],
+        hostname: "my-dev-box",
+      });
+      expect(res.tags).toEqual(["tag:my-org-my-repo"]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
