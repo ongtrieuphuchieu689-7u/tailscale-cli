@@ -59,6 +59,20 @@ Policy writes require a fetched remote policy, diff, remote validation, local ba
   ```
   `--mcp-bind` (default `127.0.0.1`) controls the nexql-mcp HTTP bind address — use `0.0.0.0` so the MCP endpoint is reachable over the tailnet (e.g. from an agent on another machine).
   Secrets never appear in argv/process listings: the DB password travels via `--password`/`PGPASSWORD`/`TS_PGPASSWORD` into the child's `PGPASSWORD` env, and the MCP bearer token via `NEXQL_MCP_HTTP_TOKEN` (or `--token`). Output masks both (`mcpToken`, `connectionString`). An ephemeral token is auto-generated when none is provided. The command **keeps the MCP server alive even when the PostgreSQL machine is down or not yet booted**: a supervisor spawns nexql-mcp and respawns it every `--db-retry-interval` ms (default 5000) until the database accepts connections; if the DB dies mid-flight and comes back, the MCP endpoint recovers automatically. `nexql-mcp` itself exits when the database is unreachable, so the supervisor only reports readiness once a real connection succeeds. **Important:** `setup_connection` can only target ports that are already relayed via `--map`/`--file`/`--listen` — the agent cannot open new relay ports at runtime; declare every port it may need up front. A pidfile (`nexql-mcp.pid.json` in the binary cache) tracks the spawned server; `SIGINT`/`SIGTERM` stops it, and connection strings/pidfile commands are masked.
+
+  **Per-mapping credentials (different passwords per relayed database).** When mappings come from a JSON/JSONC config file (`--file`), each entry can carry its own `user`, `password` and `database` — the primary mapping's credentials are used for the nexql-mcp connection, the rest are reported (masked) in `endpoints` so the agent knows which credentials to use with `setup_connection` per port:
+  ```json
+  [
+    { "listen": 5433, "target": "192.168.50.79:5433", "user": "postgres", "password": "pw-a", "database": "postgres" },
+    { "listen": 5437, "target": "192.168.50.79:5437", "user": "app", "password": "pw-b", "database": "appdb" },
+    { "listen": 5431, "target": "localhost:5432", "user": "report", "password": "pw-c", "database": "reporting" }
+  ]
+  ```
+  Flags `--user`/`--password`/`--database` and env vars act as fallbacks when the primary mapping does not set them. Password values in emitted JSON are always masked (`****…`).
+
+  **Primary fallback.** mapping[0] is the default MCP primary, but at startup every mapping target is probed (3s timeout): if mapping[0] is unreachable while another relayed database is up, the first reachable mapping becomes the primary (`PRIMARY_FALLBACK` warning; `primaryMappingIndex`/`primaryReason` in the envelope) so the MCP endpoint comes up immediately instead of respawning forever. When no target is reachable, mapping[0] stays primary and the supervisor keeps retrying.
+
+  **Console noise control.** Repeated failures are logged once per state change: identical relay `Error:` lines are deduplicated, `Connection from` lines are throttled to one per port per 30s, and the supervisor's "database not reachable yet; retrying" line prints on change plus a heartbeat every 10th retry — a long outage no longer floods the terminal.
 - `dns --enable-magicdns --yes` enables MagicDNS on the tailnet; `dns --enable-magicdns --dry-run` previews the action without applying; plain `dns` reads nameservers/preferences/search paths.
 - Custom `TS_TAILNET` domains (not `*.ts.net`) emit a warning because Funnel DNS and HTTPS rely on a Tailscale-hosted domain.
 

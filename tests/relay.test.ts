@@ -121,16 +121,29 @@ describe("TCP Relay", () => {
           targetPort: 5433,
           serve: true,
         },
+        {
+          listen: 5431,
+          target: "localhost:5432",
+          user: "app",
+          password: "secret-db-pw",
+          database: "appdb",
+        },
       ]),
     );
 
     const loaded = loadRelayConfigFile(tempFile);
-    expect(loaded).toHaveLength(2);
+    expect(loaded).toHaveLength(3);
     expect(loaded[0]!.listenPort).toBe(5432);
     expect(loaded[0]!.targetPort).toBe(5432);
     expect(loaded[1]!.listenPort).toBe(5433);
     expect(loaded[1]!.targetPort).toBe(5433);
     expect(loaded[1]!.serve).toBe(true);
+    expect(loaded[2]!.listenPort).toBe(5431);
+    expect(loaded[2]!.targetHost).toBe("localhost");
+    expect(loaded[2]!.targetPort).toBe(5432);
+    expect(loaded[2]!.user).toBe("app");
+    expect(loaded[2]!.password).toBe("secret-db-pw");
+    expect(loaded[2]!.database).toBe("appdb");
   });
 
   it("should run multi-relay for multiple ports simultaneously", async () => {

@@ -16,10 +16,28 @@ const execFileAsync = promisify(execFile);
 
 /**
  * Windows npm shims (nexql-mcp.cmd, npx.cmd) can only be launched through a
- * shell; execFile/spawn reject .cmd files without one.
+ * shell. Instead of Node's `shell: true` (which triggers DEP0190 and can leave
+ * a visible console window), the shim is invoked explicitly through %ComSpec%
+ * with `/d /s /c` and a quoted command line — windowless via windowsHide, and
+ * without the deprecated arg-concatenation path.
  */
-function shellForWin32(): { shell?: boolean } {
-  return process.platform === "win32" ? { shell: true } : {};
+function winCommand(command: string[]): { file: string; args: string[] } {
+  const comspec = process.env.ComSpec ?? "cmd.exe";
+  const quote = (arg: string): string =>
+    arg.length === 0 || /[\s"&|<>^%]/.test(arg)
+      ? `"${arg.replace(/"/g, '\\"')}"`
+      : arg;
+  const commandLine = command.map(quote).join(" ");
+  return { file: comspec, args: ["/d", "/s", "/c", `"${commandLine}"`] };
+}
+
+function commandForPlatform(command: string[]): {
+  file: string;
+  args: string[];
+} {
+  return process.platform === "win32"
+    ? winCommand(command)
+    : { file: command[0]!, args: command.slice(1) };
 }
 
 export interface NexqlMcpRunner {
@@ -35,15 +53,11 @@ function sleep(ms: number): Promise<void> {
 
 async function tryVersion(command: string[]): Promise<string | undefined> {
   try {
-    const { stdout, stderr } = await execFileAsync(
-      command[0]!,
-      command.slice(1),
-      {
-        timeout: 60_000,
-        windowsHide: true,
-        ...shellForWin32(),
-      },
-    );
+    const { file, args } = commandForPlatform(command);
+    const { stdout, stderr } = await execFileAsync(file, args, {
+      timeout: 60_000,
+      windowsHide: true,
+    });
     const text = `${stdout}\n${stderr}`.trim();
     if (!text) return undefined;
     return text.split(/\r?\n/)[0]!.trim();
@@ -295,11 +309,11 @@ export async function startNexqlMcpHttp(options: {
   const logDir = dirname(logPath);
   mkdirSync(logDir, { recursive: true });
   const logStream = openSync(logPath, "a");
-  const child = spawn(runner.command[0]!, args, {
+  const { file, args: spawnArgs } = commandForPlatform(command);
+  const child = spawn(file, spawnArgs, {
     detached: true,
     stdio: ["ignore", logStream, logStream],
     windowsHide: true,
-    ...shellForWin32(),
     env: {
       ...process.env,
       ...env,

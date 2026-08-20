@@ -170,6 +170,14 @@ PGPASSWORD=*** npx tailsacle-cli relay-mcp-postgres \
   --mcp-port 8787 --mcp-bind 0.0.0.0 --token "$MCP_TOKEN" --database postgres
 ```
 Bảo mật: password DB chỉ đi qua `--password`/`PGPASSWORD`/`TS_PGPASSWORD` vào env `PGPASSWORD` của child; token MCP đi qua `NEXQL_MCP_HTTP_TOKEN` hoặc `--token`; output và pidfile luôn mask. **Luôn chạy**: MCP server không thoát khi máy Postgres chưa bật — supervisor respawn mỗi `--db-retry-interval` ms (mặc định 5000) cho tới khi DB kết nối được; nếu DB chết giữa chừng rồi quay lại, MCP tự phục hồi. **Giới hạn**: `setup_connection` chỉ target được các port đã khai báo relay sẵn (`--map`/`--file`/`--listen`) — agent không tự mở port mới runtime.
+Mỗi mapping có thể mang credentials riêng (user/password/database) khi dùng `--file`:
+```json
+[
+  { "listen": 5433, "target": "192.168.50.79:5433", "user": "postgres", "password": "pw-a", "database": "postgres" },
+  { "listen": 5431, "target": "localhost:5432", "user": "report", "password": "pw-b", "database": "reporting" }
+]
+```
+Mapping đầu tiên là MCP primary; nếu target của nó không kết nối được lúc khởi động, CLI tự chọn mapping **reachable đầu tiên** làm primary (cảnh báo `PRIMARY_FALLBACK` + `primaryMappingIndex`/`primaryReason`), MCP lên ngay thay vì respawn liên tục. Log lỗi lặp lại được dedupe/throttle để không spam console khi DB down lâu.
 
 ### Service management (`service` — chạy relay như systemd / Windows service)
 

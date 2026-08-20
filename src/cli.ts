@@ -1706,23 +1706,67 @@ program
           );
         }
 
-        const primary = mappings[0]!;
+        // MCP primary selection: mapping[0] is the documented default, but if
+        // its target is unreachable while another relayed database is up, the
+        // first reachable mapping becomes the primary so the MCP endpoint stays
+        // usable instead of respawning nexql-mcp forever. When nothing is
+        // reachable, mapping[0] stays primary and the supervisor retries.
+        const primaryProbes = await Promise.all(
+          mappings.map(async (m) => {
+            try {
+              await preflightTcpCheck({
+                host: m.targetHost,
+                port: m.targetPort,
+                timeoutMs: 3_000,
+              });
+              return true;
+            } catch {
+              return false;
+            }
+          }),
+        );
+        const reachable = primaryProbes
+          .map((ok, i) => (ok ? i : -1))
+          .filter((i) => i >= 0);
+        const primaryIndex =
+          reachable.length === 0 || reachable[0] === 0 ? 0 : reachable[0]!;
+        const primary = mappings[primaryIndex]!;
+        const primaryReason =
+          primaryIndex === 0
+            ? "mapping[0] is the configured primary (target reachable)"
+            : `PRIMARY_FALLBACK: mapping[0] (${mappings[0]!.targetHost}:${mappings[0]!.targetPort}) unreachable; using first reachable mapping[${primaryIndex}] (${primary.targetHost}:${primary.targetPort}) as MCP primary`;
         const runner: NexqlMcpRunner = await resolveNexqlMcpRunner();
+
+        // Console spam guard: identical relay errors are logged once per
+        // change, connections once per throttle window per port, and
+        // supervisor retries once per state change with a slow heartbeat.
+        const lastErrorByPort = new Map<number, string>();
+        const lastConnectionByPort = new Map<number, number>();
+        const CONNECTION_LOG_INTERVAL_MS = 30_000;
+        let lastRetryMessage = "";
+        let retryCount = 0;
+        const quietJson = (): boolean =>
+          Boolean(program.opts<{ json?: boolean }>().json);
 
         multiRelay = await startMultiRelay(mappings, {
           onConnection: (mapping, addr) => {
-            if (!program.opts<{ json?: boolean }>().json) {
+            if (quietJson()) return;
+            const now = Date.now();
+            const last = lastConnectionByPort.get(mapping.listenPort) ?? 0;
+            if (now - last >= CONNECTION_LOG_INTERVAL_MS) {
+              lastConnectionByPort.set(mapping.listenPort, now);
               console.error(
                 `[relay-mcp-postgres :${mapping.listenPort}] Connection from ${addr} -> forwarding to ${mapping.targetHost}:${mapping.targetPort}`,
               );
             }
           },
           onError: (mapping, err) => {
-            if (!program.opts<{ json?: boolean }>().json) {
-              console.error(
-                `[relay-mcp-postgres :${mapping.listenPort}] Error: ${err.message}`,
-              );
-            }
+            if (quietJson()) return;
+            if (lastErrorByPort.get(mapping.listenPort) === err.message) return;
+            lastErrorByPort.set(mapping.listenPort, err.message);
+            console.error(
+              `[relay-mcp-postgres :${mapping.listenPort}] Error: ${err.message}`,
+            );
           },
         });
 
@@ -1741,11 +1785,14 @@ program
         const token =
           options.token ?? process.env.NEXQL_MCP_HTTP_TOKEN ?? randomToken();
         const password =
+          primary.password ??
           options.password ??
           process.env.PGPASSWORD ??
           process.env.TS_PGPASSWORD ??
           "";
-        const connectionString = `postgres://${options.user}:${encodeURIComponent(password)}@127.0.0.1:${primary.listenPort}/${options.database}`;
+        const user = primary.user ?? options.user;
+        const database = primary.database ?? options.database;
+        const connectionString = `postgres://${user}:${encodeURIComponent(password)}@127.0.0.1:${primary.listenPort}/${database}`;
         const logPath = options.log ?? join(cacheBinDir(), "nexql-mcp.log");
 
         const wantsServe = options.serve || mappings.some((m) => m.serve);
@@ -1794,17 +1841,25 @@ program
               readyTimeoutMs: mcpReadyTimeout,
             });
             nexqlPid = started.pid;
-            if (!program.opts<{ json?: boolean }>().json) {
+            retryCount = 0;
+            lastRetryMessage = "";
+            if (!quietJson()) {
               console.error(
                 `[relay-mcp-postgres] nexql-mcp HTTP MCP ready on http://127.0.0.1:${mcpPort}/mcp (pid ${started.pid})`,
               );
             }
             return { pid: started.pid, waitForExit: started.waitForExit };
           } catch (error) {
-            if (!program.opts<{ json?: boolean }>().json) {
-              console.error(
-                `[relay-mcp-postgres] database not reachable yet; retrying nexql-mcp in ${retryInterval}ms (${error instanceof Error ? error.message : String(error)})`,
-              );
+            if (!quietJson()) {
+              retryCount += 1;
+              const msg =
+                error instanceof Error ? error.message : String(error);
+              if (msg !== lastRetryMessage || retryCount % 10 === 0) {
+                lastRetryMessage = msg;
+                console.error(
+                  `[relay-mcp-postgres] database not reachable yet; retrying nexql-mcp in ${retryInterval}ms (${msg})`,
+                );
+              }
             }
             nexqlPid = undefined;
             return undefined;
@@ -1826,7 +1881,7 @@ program
               // simply respawn on the next iteration.
             }
             if (stopping) break;
-            if (!program.opts<{ json?: boolean }>().json) {
+            if (!quietJson()) {
               console.error(
                 "[relay-mcp-postgres] nexql-mcp exited (database went down); respawning",
               );
@@ -1836,13 +1891,31 @@ program
           }
         })();
 
+        const sanitizedMappings = mappings.map((m) => ({
+          ...m,
+          ...(m.password !== undefined
+            ? { password: maskSecret(m.password) }
+            : {}),
+        }));
+
         emit(
           "relay-mcp-postgres",
           {
             status: "running",
             relayCount: mappings.length,
-            mappings,
-            primaryDatabase: options.database,
+            mappings: sanitizedMappings,
+            primaryMappingIndex: primaryIndex,
+            primaryReason,
+            endpoints: mappings.map((m) => ({
+              listen: `${m.listenHost ?? options.host ?? "0.0.0.0"}:${m.listenPort}`,
+              target: `${m.targetHost}:${m.targetPort}`,
+              ...(m.user !== undefined ? { user: m.user } : {}),
+              ...(m.password !== undefined
+                ? { password: maskSecret(m.password) }
+                : {}),
+              ...(m.database !== undefined ? { database: m.database } : {}),
+            })),
+            primaryDatabase: database,
             mcpHttpUrl: `http://${mcpBind === "0.0.0.0" ? "0.0.0.0" : mcpBind}:${mcpPort}/mcp`,
             mcpToken: maskToken(token),
             connectionString: maskConnString(connectionString),
@@ -1854,6 +1927,11 @@ program
           [
             "setup_connection can only target ports already relayed via --map/--file/--listen; the agent cannot open new relay ports at runtime",
             "MCP server stays up even when the PostgreSQL machine is down; it reconnects automatically once the database accepts connections (supervisor retry)",
+            ...(primaryIndex !== 0
+              ? [
+                  `PRIMARY_FALLBACK: ${mappings[0]!.targetHost}:${mappings[0]!.targetPort} unreachable; MCP primary is mapping[${primaryIndex}] (${primary.targetHost}:${primary.targetPort})`,
+                ]
+              : []),
           ],
           [
             `TCP relay listening on ${primary.listenHost ?? options.host ?? "0.0.0.0"}:${primary.listenPort} -> ${primary.targetHost}:${primary.targetPort}`,

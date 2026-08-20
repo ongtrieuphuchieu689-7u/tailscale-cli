@@ -9,6 +9,9 @@ export interface RelayMapping {
   listenHost?: string | undefined;
   serve?: boolean | undefined;
   funnel?: boolean | undefined;
+  user?: string | undefined;
+  password?: string | undefined;
+  database?: string | undefined;
 }
 
 export interface RelayOptions {
@@ -147,6 +150,9 @@ export function loadRelayConfigFile(filePath: string): RelayMapping[] {
         listenHost: obj.listenHost ? String(obj.listenHost) : undefined,
         serve: Boolean(obj.serve),
         funnel: Boolean(obj.funnel),
+        user: obj.user !== undefined ? String(obj.user) : undefined,
+        password: obj.password !== undefined ? String(obj.password) : undefined,
+        database: obj.database !== undefined ? String(obj.database) : undefined,
       });
     }
   }
