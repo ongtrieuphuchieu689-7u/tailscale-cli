@@ -205,6 +205,11 @@ program.action(
         throw new Error(
           `VERIFY_TIMEOUT_INVALID: ${options.verifyTimeout} is not a valid timeout in seconds`,
         );
+      const mergedEnv = tailscaleEnv();
+      for (const [key, value] of Object.entries(mergedEnv)) {
+        if (value !== undefined && process.env[key] === undefined)
+          process.env[key] = value;
+      }
       const result = await runOpenCodeFlow({
         config: resolveConfig(tailscaleEnv()),
         port,
