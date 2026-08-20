@@ -215,7 +215,7 @@ export function resolveTags(config: ResolvedConfig): {
         .toLowerCase()
         .replace(/[^a-z0-9-]+/g, "-")
         .replace(/^-+|-+$/g, "") || "user";
-    const sshTag = `tag:sshWhoami-${userSlug}`;
+    const sshTag = `tag:sshwhoami-${userSlug}`;
     if (!tags.includes(sshTag)) {
       tags.push(sshTag);
     }

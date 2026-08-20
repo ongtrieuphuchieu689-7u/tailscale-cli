@@ -304,7 +304,7 @@ describe("resolveTags auto-tagging", () => {
     }
   });
 
-  it("automatically appends tag:sshWhoami-<username> when ssh is true", () => {
+  it("automatically appends tag:sshwhoami-<username> when ssh is true", () => {
     vi.stubEnv("GITHUB_REPOSITORY", "");
     vi.stubEnv("GITLAB_PROJECT_PATH", "");
     vi.stubEnv("CI_PROJECT_PATH", "");
@@ -322,7 +322,7 @@ describe("resolveTags auto-tagging", () => {
         tags: [],
         hostname: "my-dev-box",
       });
-      expect(res.tags).toEqual(["tag:my-dev-box", `tag:sshWhoami-${userSlug}`]);
+      expect(res.tags).toEqual(["tag:my-dev-box", `tag:sshwhoami-${userSlug}`]);
       expect(res.autoTagged).toBe(true);
     } finally {
       vi.unstubAllEnvs();
