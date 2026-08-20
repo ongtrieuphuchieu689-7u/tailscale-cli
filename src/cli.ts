@@ -282,6 +282,7 @@ function emit<T>(
   if (program.opts<{ json?: boolean }>().json)
     console.log(JSON.stringify(envelope, null, 2));
   else console.log(JSON.stringify(resolved, null, 2));
+  process.exitCode = 0;
 }
 
 function fail(

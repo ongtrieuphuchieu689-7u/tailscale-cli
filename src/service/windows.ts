@@ -165,10 +165,10 @@ function runWinSw(
 async function removeDirRetry(dir: string, attempts = 5): Promise<void> {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      rmSync(dir, { recursive: true, force: true });
+      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
       return;
-    } catch (error) {
-      if (attempt === attempts - 1) throw error;
+    } catch {
+      if (attempt === attempts - 1) return;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
   }

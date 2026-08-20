@@ -1,4 +1,11 @@
-import { existsSync, readFileSync, watchFile } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  watchFile,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { registryAdd, registryRemove, registryList } from "./registry.js";
 import { cliEntrypoint, nodeExecutable } from "./linux.js";
@@ -37,15 +44,22 @@ export function schedulerLogDir(name: string): string {
   return `${home}\\.tailsacle-cli\\logs\\${name}`;
 }
 
+export function schedulerBatchPath(name: string, logDir: string): string {
+  return `${logDir}\\run-${name}.cmd`;
+}
+
 function taskCommand(config: ServiceConfig, logDir: string): string {
+  mkdirSync(logDir, { recursive: true });
+  const batchPath = schedulerBatchPath(config.name, logDir);
   const execArgs = config.script
     ? [config.script, ...config.args]
     : [cliEntrypoint(), ...config.args];
-  const inner = [nodeExecutable(), ...execArgs].join(" ");
   const outLog = `${logDir}\\out.log`;
   const errLog = `${logDir}\\err.log`;
-  // mkdir ensures log dir exists before redirect; >> appends on each task run
-  return `cmd /c "if not exist "${logDir}" mkdir "${logDir}" && cd /d ${config.workingDir} && ${inner} >>"${outLog}" 2>>"${errLog}""`;
+  const innerArgs = execArgs.map((a) => `"${a}"`).join(" ");
+  const content = `@echo off\r\nif not exist "${logDir}" mkdir "${logDir}"\r\ncd /d "${config.workingDir}"\r\n"${nodeExecutable()}" ${innerArgs} >>"${outLog}" 2>>"${errLog}"\r\n`;
+  writeFileSync(batchPath, content, "utf8");
+  return `cmd /c "${batchPath}"`;
 }
 
 function taskExists(name: string): boolean {
@@ -112,6 +126,14 @@ export class WindowsSchedulerManager implements ServiceManager {
       throw new Error(
         `SERVICE_SCHTASKS_FAILED: could not delete scheduled task "${taskPathFor(name)}"`,
       );
+    }
+    if (info.logDir) {
+      try {
+        const batchPath = schedulerBatchPath(name, info.logDir);
+        if (existsSync(batchPath)) rmSync(batchPath, { force: true });
+      } catch {
+        // best effort
+      }
     }
     await registryRemove(name);
   }
