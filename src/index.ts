@@ -11,6 +11,20 @@ export {
   type RelayMapping,
   type MultiRelayInstance,
 } from "./relay.js";
+export {
+  resolveNexqlMcpRunner,
+  preflightTcpCheck,
+  startNexqlMcpHttp,
+  stopNexqlMcpHttp,
+  maskConnString,
+  connStringWithoutPassword,
+  passwordFromConnString,
+  maskToken,
+  randomToken,
+  readNexqlMcpHttpRecord,
+  type NexqlMcpRunner,
+  type NexqlMcpHttpRecord,
+} from "./nexql-mcp.js";
 export { getServiceManager, getSchedulerManager } from "./service/index.js";
 export {
   generateSampleConfig,

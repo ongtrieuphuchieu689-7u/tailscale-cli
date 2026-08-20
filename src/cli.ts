@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { apiCredentialHint, ApiError, TailscaleApiClient } from "./api.js";
@@ -27,6 +27,7 @@ import {
   TailscaleLocal,
 } from "./tailscale.js";
 import {
+  cacheBinDir,
   installWindowsMsi,
   latestStableInfo,
   latestWindowsInstallInfo,
@@ -1304,6 +1305,16 @@ import {
   loadRelayConfigFile,
   type RelayMapping,
 } from "./relay.js";
+import {
+  resolveNexqlMcpRunner,
+  preflightTcpCheck,
+  startNexqlMcpHttp,
+  stopNexqlMcpHttp,
+  maskConnString,
+  maskToken,
+  randomToken,
+  type NexqlMcpRunner,
+} from "./nexql-mcp.js";
 
 program
   .command("relay")
@@ -1499,6 +1510,316 @@ program
         });
       } catch (error) {
         fail("relay", error, start);
+      }
+    },
+  );
+
+program
+  .command("relay-mcp-postgres")
+  .description(
+    "Run TCP relays to PostgreSQL and serve a nexql-mcp HTTP MCP endpoint exposing all databases on the relayed instance (agent-driven connection via setup_connection)",
+  )
+  .option("-l, --listen <port>", "local listen port (e.g. 15433)")
+  .option(
+    "-t, --target <host:port>",
+    "PostgreSQL target host:port (e.g. 100.x.y.z:5433 or other-host:5433)",
+  )
+  .option(
+    "-m, --map <mapping...>",
+    "repeatable port mappings, e.g. '15433:192.168.50.79:5433' (first mapping is the primary DB endpoint)",
+  )
+  .option(
+    "-f, --file <configPath>",
+    "path to JSON configuration file defining array of relay mappings",
+  )
+  .option(
+    "--host <address>",
+    "default listen host (default: 0.0.0.0)",
+    "0.0.0.0",
+  )
+  .option(
+    "--target-host <address>",
+    "default target host when using simple listen:targetPort mappings",
+    "127.0.0.1",
+  )
+  .option(
+    "--mcp-port <port>",
+    "HTTP MCP listen port for nexql-mcp (default: 8787)",
+    "8787",
+  )
+  .option(
+    "--token <token>",
+    "HTTP MCP bearer token (auto-generated when omitted; also reads NEXQL_MCP_HTTP_TOKEN)",
+  )
+  .option(
+    "--user <user>",
+    "PostgreSQL user for the primary endpoint (default: postgres)",
+    "postgres",
+  )
+  .option(
+    "--password <password>",
+    "PostgreSQL password for the primary endpoint (default: $PGPASSWORD or $TS_PGPASSWORD; never printed)",
+  )
+  .option(
+    "--database <database>",
+    "default PostgreSQL database for the primary endpoint (default: postgres)",
+    "postgres",
+  )
+  .option(
+    "--db-connect-timeout <ms>",
+    "preflight TCP timeout for the PostgreSQL target in milliseconds (default: 20000)",
+    "20000",
+  )
+  .option(
+    "--mcp-ready-timeout <ms>",
+    "timeout for nexql-mcp to become ready in milliseconds (default: 30000)",
+    "30000",
+  )
+  .option("--log <path>", "path to append nexql-mcp output logs")
+  .option(
+    "--serve",
+    "also configure tailscale serve for all relay ports in the tailnet",
+  )
+  .option(
+    "--funnel",
+    "also configure tailscale funnel for all relay ports publicly (requires --serve)",
+  )
+  .action(
+    async (options: {
+      listen?: string;
+      target?: string;
+      map?: string[];
+      file?: string;
+      host?: string;
+      targetHost?: string;
+      mcpPort?: string;
+      token?: string;
+      user?: string;
+      password?: string;
+      database?: string;
+      dbConnectTimeout?: string;
+      mcpReadyTimeout?: string;
+      log?: string;
+      serve?: boolean;
+      funnel?: boolean;
+    }) => {
+      const start = performance.now();
+      let multiRelay:
+        { relays: unknown[]; close: () => Promise<void> } | undefined;
+      let nexqlPid: number | undefined;
+      try {
+        const mappings: RelayMapping[] = [];
+
+        if (options.file) {
+          mappings.push(...loadRelayConfigFile(options.file));
+        }
+        if (options.map && options.map.length > 0) {
+          for (const m of options.map) {
+            mappings.push(
+              parseRelayMapping(m, options.targetHost ?? "127.0.0.1"),
+            );
+          }
+        }
+        if (options.listen && options.target) {
+          const listenPort = Number(options.listen);
+          if (
+            !Number.isFinite(listenPort) ||
+            listenPort <= 0 ||
+            listenPort > 65535
+          ) {
+            throw new Error(
+              `RELAY_PORT_INVALID: --listen must be a valid port number (1-65535), got ${options.listen}`,
+            );
+          }
+          const targetParts = options.target.split(":");
+          if (targetParts.length !== 2) {
+            throw new Error(
+              `RELAY_TARGET_INVALID: --target must be format host:port, got ${options.target}`,
+            );
+          }
+          const targetHost = targetParts[0]!.trim();
+          const targetPort = Number(targetParts[1]!.trim());
+          if (
+            !targetHost ||
+            !Number.isFinite(targetPort) ||
+            targetPort <= 0 ||
+            targetPort > 65535
+          ) {
+            throw new Error(
+              `RELAY_TARGET_INVALID: invalid host or port in --target ${options.target}`,
+            );
+          }
+          mappings.push({
+            listenPort,
+            targetHost,
+            targetPort,
+            listenHost: options.host,
+            serve: options.serve,
+            funnel: options.funnel,
+          });
+        }
+
+        if (mappings.length === 0) {
+          throw new Error(
+            "RELAY_SPEC_REQUIRED: specify --listen & --target, or --map <port:port>, or --file <config.json>",
+          );
+        }
+
+        const mcpPort = Number(options.mcpPort);
+        if (!Number.isFinite(mcpPort) || mcpPort <= 0 || mcpPort > 65535) {
+          throw new Error(
+            `NEXQL_MCP_PORT_INVALID: --mcp-port must be a valid port number (1-65535), got ${options.mcpPort}`,
+          );
+        }
+        const dbConnectTimeout = Number(options.dbConnectTimeout);
+        if (
+          !Number.isFinite(dbConnectTimeout) ||
+          dbConnectTimeout <= 0 ||
+          dbConnectTimeout > 120_000
+        ) {
+          throw new Error(
+            `NEXQL_MCP_DB_TIMEOUT_INVALID: --db-connect-timeout must be a positive integer <= 120000, got ${options.dbConnectTimeout}`,
+          );
+        }
+        const mcpReadyTimeout = Number(options.mcpReadyTimeout);
+        if (
+          !Number.isFinite(mcpReadyTimeout) ||
+          mcpReadyTimeout <= 0 ||
+          mcpReadyTimeout > 120_000
+        ) {
+          throw new Error(
+            `NEXQL_MCP_READY_TIMEOUT_INVALID: --mcp-ready-timeout must be a positive integer <= 120000, got ${options.mcpReadyTimeout}`,
+          );
+        }
+
+        const primary = mappings[0]!;
+        const runner: NexqlMcpRunner = await resolveNexqlMcpRunner();
+
+        multiRelay = await startMultiRelay(mappings, {
+          onConnection: (mapping, addr) => {
+            if (!program.opts<{ json?: boolean }>().json) {
+              console.error(
+                `[relay-mcp-postgres :${mapping.listenPort}] Connection from ${addr} -> forwarding to ${mapping.targetHost}:${mapping.targetPort}`,
+              );
+            }
+          },
+          onError: (mapping, err) => {
+            if (!program.opts<{ json?: boolean }>().json) {
+              console.error(
+                `[relay-mcp-postgres :${mapping.listenPort}] Error: ${err.message}`,
+              );
+            }
+          },
+        });
+
+        // Fail fast: every relay listener must be up, and the primary DB
+        // target must accept TCP before we spawn nexql-mcp (which exits
+        // immediately when the database is unreachable).
+        for (const m of mappings) {
+          await preflightTcpCheck({
+            host: "127.0.0.1",
+            port: m.listenPort,
+            timeoutMs: 5_000,
+          });
+        }
+        await preflightTcpCheck({
+          host: primary.targetHost,
+          port: primary.targetPort,
+          timeoutMs: dbConnectTimeout,
+        });
+
+        const token =
+          options.token ?? process.env.NEXQL_MCP_HTTP_TOKEN ?? randomToken();
+        const password =
+          options.password ??
+          process.env.PGPASSWORD ??
+          process.env.TS_PGPASSWORD ??
+          "";
+        const connectionString = `postgres://${options.user}:${encodeURIComponent(password)}@127.0.0.1:${primary.listenPort}/${options.database}`;
+        const logPath = options.log ?? join(cacheBinDir(), "nexql-mcp.log");
+
+        const started = await startNexqlMcpHttp({
+          runner,
+          connectionString,
+          httpPort: mcpPort,
+          token,
+          logPath,
+          readyTimeoutMs: mcpReadyTimeout,
+        });
+        nexqlPid = started.pid;
+
+        const wantsServe = options.serve || mappings.some((m) => m.serve);
+        const wantsFunnel = options.funnel || mappings.some((m) => m.funnel);
+
+        if (wantsServe || wantsFunnel) {
+          const local = new TailscaleLocal(await findTailscale());
+          for (const m of mappings) {
+            if (options.serve || m.serve) {
+              await local.serve([
+                "--bg",
+                "--yes",
+                `--tcp=${m.listenPort}`,
+                `tcp://127.0.0.1:${m.listenPort}`,
+              ]);
+            }
+            if (options.funnel || m.funnel) {
+              await local.funnel([
+                "--bg",
+                `--tcp=${m.listenPort}`,
+                `tcp://127.0.0.1:${m.listenPort}`,
+              ]);
+            }
+          }
+        }
+
+        emit(
+          "relay-mcp-postgres",
+          {
+            status: "running",
+            relayCount: mappings.length,
+            mappings,
+            primaryDatabase: options.database,
+            mcpHttpUrl: `http://127.0.0.1:${mcpPort}/mcp`,
+            mcpToken: maskToken(token),
+            connectionString: maskConnString(connectionString),
+            nexqlMcpPid: started.pid,
+            runnerVersion: started.version,
+            tailscaleServe: Boolean(wantsServe),
+            tailscaleFunnel: Boolean(wantsFunnel),
+          },
+          [
+            "setup_connection can only target ports already relayed via --map/--file/--listen; the agent cannot open new relay ports at runtime",
+          ],
+          [
+            `TCP relay listening on ${primary.listenHost ?? options.host ?? "0.0.0.0"}:${primary.listenPort} -> ${primary.targetHost}:${primary.targetPort}`,
+            `nexql-mcp HTTP MCP listening on http://127.0.0.1:${mcpPort}/mcp (token masked, pid ${started.pid})`,
+          ],
+          [],
+          start,
+        );
+
+        await new Promise<void>((resolve) => {
+          const shutdown = (): void => {
+            void Promise.all([
+              multiRelay?.close().catch(() => {}),
+              (async () => {
+                if (nexqlPid !== undefined) {
+                  const res = await stopNexqlMcpHttp();
+                  void res;
+                }
+              })(),
+            ]).then(() => resolve());
+          };
+          process.on("SIGINT", shutdown);
+          process.on("SIGTERM", shutdown);
+        });
+      } catch (error) {
+        await multiRelay?.close().catch(() => {});
+        if (nexqlPid !== undefined) {
+          const res = await stopNexqlMcpHttp();
+          void res;
+        }
+        fail("relay-mcp-postgres", error, start);
       }
     },
   );

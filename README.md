@@ -161,6 +161,16 @@ Ví dụ file `relays.json`:
 
 Funnel ports are validated before execution; supported public HTTPS ports are 443, 8443 and 10000.
 
+**Phương án 3 — Relay + PostgreSQL MCP (nexql-mcp HTTP):**
+Chạy relay tới PostgreSQL và đồng thời mở MCP HTTP endpoint để agent truy cập **toàn bộ database** trên instance (chọn database runtime qua `setup_connection`, không cần 1 config MCP cho từng DB):
+```bash
+# Relay local :15433 -> Postgres 192.168.50.79:5433, MCP HTTP trên :8787
+PGPASSWORD=*** npx tailsacle-cli relay-mcp-postgres \
+  --map 15433:192.168.50.79:5433 --map 15434:192.168.50.79:5434 \
+  --mcp-port 8787 --token "$MCP_TOKEN" --database postgres
+```
+Bảo mật: password DB chỉ đi qua `--password`/`PGPASSWORD`/`TS_PGPASSWORD` vào env `PGPASSWORD` của child; token MCP đi qua `NEXQL_MCP_HTTP_TOKEN` hoặc `--token`; output và pidfile luôn mask. **Fail fast**: tool kiểm tra relay listener và DB target trước khi spawn nexql-mcp (vì nexql-mcp thoát ngay khi DB không kết nối được). **Giới hạn**: `setup_connection` chỉ target được các port đã khai báo relay sẵn (`--map`/`--file`/`--listen`) — agent không tự mở port mới runtime.
+
 ### Service management (`service` — chạy relay như systemd / Windows service)
 
 ```bash
