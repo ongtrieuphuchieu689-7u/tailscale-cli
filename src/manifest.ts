@@ -318,7 +318,7 @@ export const manifest = {
         ["--user <user>"],
         ["--password <password>"],
         ["--database <database>"],
-        ["--db-connect-timeout <ms>"],
+        ["--db-retry-interval <ms>"],
         ["--mcp-ready-timeout <ms>"],
         ["--log <path>"],
         ["--serve"],
@@ -339,7 +339,7 @@ export const manifest = {
       privileges: ["none (or tailscaled running if --serve/--funnel)"],
       sideEffects: [
         "run local TCP proxy",
-        "spawn nexql-mcp HTTP MCP server",
+        "spawn nexql-mcp HTTP MCP server (supervisor respawns until the DB is reachable)",
         "optional Serve/Funnel configure",
       ],
       retryable: true,

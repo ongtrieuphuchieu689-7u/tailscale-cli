@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import net from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
 import {
   maskConnString,
   connStringWithoutPassword,
@@ -7,6 +10,8 @@ import {
   maskToken,
   randomToken,
   preflightTcpCheck,
+  startNexqlMcpHttp,
+  type NexqlMcpRunner,
 } from "../src/nexql-mcp.js";
 
 describe("nexql-mcp helpers", () => {
@@ -63,5 +68,35 @@ describe("nexql-mcp helpers", () => {
     await expect(
       preflightTcpCheck({ host: "127.0.0.1", port, timeoutMs: 500 }),
     ).rejects.toThrow(/NEXQL_MCP_DB_UNREACHABLE/);
+  });
+
+  it("should spawn nexql-mcp and expose waitForExit for supervisor respawn", async () => {
+    // Use a real reachable runner via npx; the DB target port is intentionally
+    // unreachable, so startNexqlMcpHttp must fail fast without leaving the
+    // HTTP port bound. This validates the fail-fast + waitForExit contract the
+    // relay-mcp-postgres supervisor relies on.
+    const runner: NexqlMcpRunner = {
+      kind: "npx",
+      command: ["npx", "-y", "nexql-mcp"],
+      installedBy: "npx-resolved",
+    };
+    const dir = mkdtempSync(join(tmpdir(), "nexql-test-"));
+    const logPath = join(dir, "nexql.log");
+    let server: net.Server | undefined;
+    try {
+      await expect(
+        startNexqlMcpHttp({
+          runner,
+          connectionString: "postgres://postgres:pw@127.0.0.1:1/never",
+          httpPort: 0,
+          token: "tok",
+          logPath,
+          readyTimeoutMs: 5_000,
+        }),
+      ).rejects.toThrow(/NEXQL_MCP_EXITED_EARLY|NEXQL_MCP_SERVE_FAILED/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      void server;
+    }
   });
 });

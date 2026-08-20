@@ -1566,9 +1566,9 @@ program
     "postgres",
   )
   .option(
-    "--db-connect-timeout <ms>",
-    "preflight TCP timeout for the PostgreSQL target in milliseconds (default: 20000)",
-    "20000",
+    "--db-retry-interval <ms>",
+    "respawn retry interval for nexql-mcp while the PostgreSQL target is unreachable (default: 5000)",
+    "5000",
   )
   .option(
     "--mcp-ready-timeout <ms>",
@@ -1597,7 +1597,7 @@ program
       user?: string;
       password?: string;
       database?: string;
-      dbConnectTimeout?: string;
+      dbRetryInterval?: string;
       mcpReadyTimeout?: string;
       log?: string;
       serve?: boolean;
@@ -1671,14 +1671,14 @@ program
             `NEXQL_MCP_PORT_INVALID: --mcp-port must be a valid port number (1-65535), got ${options.mcpPort}`,
           );
         }
-        const dbConnectTimeout = Number(options.dbConnectTimeout);
+        const dbRetryInterval = Number(options.dbRetryInterval ?? 5_000);
         if (
-          !Number.isFinite(dbConnectTimeout) ||
-          dbConnectTimeout <= 0 ||
-          dbConnectTimeout > 120_000
+          !Number.isFinite(dbRetryInterval) ||
+          dbRetryInterval < 1_000 ||
+          dbRetryInterval > 60_000
         ) {
           throw new Error(
-            `NEXQL_MCP_DB_TIMEOUT_INVALID: --db-connect-timeout must be a positive integer <= 120000, got ${options.dbConnectTimeout}`,
+            `NEXQL_MCP_RETRY_INVALID: --db-retry-interval must be between 1000 and 60000 ms, got ${options.dbRetryInterval}`,
           );
         }
         const mcpReadyTimeout = Number(options.mcpReadyTimeout);
@@ -1712,9 +1712,10 @@ program
           },
         });
 
-        // Fail fast: every relay listener must be up, and the primary DB
-        // target must accept TCP before we spawn nexql-mcp (which exits
-        // immediately when the database is unreachable).
+        // Every relay listener must be up before we hand the endpoint to
+        // nexql-mcp; the DB target itself is allowed to be down — the
+        // supervisor below respawns nexql-mcp as soon as the database becomes
+        // reachable.
         for (const m of mappings) {
           await preflightTcpCheck({
             host: "127.0.0.1",
@@ -1722,11 +1723,6 @@ program
             timeoutMs: 5_000,
           });
         }
-        await preflightTcpCheck({
-          host: primary.targetHost,
-          port: primary.targetPort,
-          timeoutMs: dbConnectTimeout,
-        });
 
         const token =
           options.token ?? process.env.NEXQL_MCP_HTTP_TOKEN ?? randomToken();
@@ -1737,16 +1733,6 @@ program
           "";
         const connectionString = `postgres://${options.user}:${encodeURIComponent(password)}@127.0.0.1:${primary.listenPort}/${options.database}`;
         const logPath = options.log ?? join(cacheBinDir(), "nexql-mcp.log");
-
-        const started = await startNexqlMcpHttp({
-          runner,
-          connectionString,
-          httpPort: mcpPort,
-          token,
-          logPath,
-          readyTimeoutMs: mcpReadyTimeout,
-        });
-        nexqlPid = started.pid;
 
         const wantsServe = options.serve || mappings.some((m) => m.serve);
         const wantsFunnel = options.funnel || mappings.some((m) => m.funnel);
@@ -1772,6 +1758,69 @@ program
           }
         }
 
+        // Supervisor: keep nexql-mcp alive so the MCP HTTP endpoint is
+        // available even before the PostgreSQL machine has booted. nexql-mcp
+        // exits immediately when the database is unreachable, so we respawn it
+        // until the DB accepts connections, and respawn again if it dies
+        // mid-flight (e.g. the DB machine shuts down and comes back).
+        const retryInterval = dbRetryInterval;
+        let stopping = false;
+
+        const trySpawn = async (): Promise<
+          { pid: number; waitForExit: Promise<void> } | undefined
+        > => {
+          try {
+            const started = await startNexqlMcpHttp({
+              runner,
+              connectionString,
+              httpPort: mcpPort,
+              token,
+              logPath,
+              readyTimeoutMs: mcpReadyTimeout,
+            });
+            nexqlPid = started.pid;
+            if (!program.opts<{ json?: boolean }>().json) {
+              console.error(
+                `[relay-mcp-postgres] nexql-mcp HTTP MCP ready on http://127.0.0.1:${mcpPort}/mcp (pid ${started.pid})`,
+              );
+            }
+            return { pid: started.pid, waitForExit: started.waitForExit };
+          } catch (error) {
+            if (!program.opts<{ json?: boolean }>().json) {
+              console.error(
+                `[relay-mcp-postgres] database not reachable yet; retrying nexql-mcp in ${retryInterval}ms (${error instanceof Error ? error.message : String(error)})`,
+              );
+            }
+            nexqlPid = undefined;
+            return undefined;
+          }
+        };
+
+        const supervisor = (async (): Promise<void> => {
+          let spawned = await trySpawn();
+          while (!stopping) {
+            if (spawned === undefined) {
+              await sleepMs(retryInterval);
+              spawned = await trySpawn();
+              continue;
+            }
+            try {
+              await spawned.waitForExit;
+            } catch {
+              // waitForExit always resolves; a throw here is unexpected, so
+              // simply respawn on the next iteration.
+            }
+            if (stopping) break;
+            if (!program.opts<{ json?: boolean }>().json) {
+              console.error(
+                "[relay-mcp-postgres] nexql-mcp exited (database went down); respawning",
+              );
+            }
+            nexqlPid = undefined;
+            spawned = undefined;
+          }
+        })();
+
         emit(
           "relay-mcp-postgres",
           {
@@ -1782,17 +1831,18 @@ program
             mcpHttpUrl: `http://127.0.0.1:${mcpPort}/mcp`,
             mcpToken: maskToken(token),
             connectionString: maskConnString(connectionString),
-            nexqlMcpPid: started.pid,
-            runnerVersion: started.version,
+            nexqlMcpPid: nexqlPid ?? null,
+            runnerVersion: runner.version,
             tailscaleServe: Boolean(wantsServe),
             tailscaleFunnel: Boolean(wantsFunnel),
           },
           [
             "setup_connection can only target ports already relayed via --map/--file/--listen; the agent cannot open new relay ports at runtime",
+            "MCP server stays up even when the PostgreSQL machine is down; it reconnects automatically once the database accepts connections (supervisor retry)",
           ],
           [
             `TCP relay listening on ${primary.listenHost ?? options.host ?? "0.0.0.0"}:${primary.listenPort} -> ${primary.targetHost}:${primary.targetPort}`,
-            `nexql-mcp HTTP MCP listening on http://127.0.0.1:${mcpPort}/mcp (token masked, pid ${started.pid})`,
+            `nexql-mcp HTTP MCP listening on http://127.0.0.1:${mcpPort}/mcp (token masked)`,
           ],
           [],
           start,
@@ -1800,6 +1850,7 @@ program
 
         await new Promise<void>((resolve) => {
           const shutdown = (): void => {
+            stopping = true;
             void Promise.all([
               multiRelay?.close().catch(() => {}),
               (async () => {
@@ -1808,6 +1859,7 @@ program
                   void res;
                 }
               })(),
+              supervisor,
             ]).then(() => resolve());
           };
           process.on("SIGINT", shutdown);

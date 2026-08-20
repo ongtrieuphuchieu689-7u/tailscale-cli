@@ -269,7 +269,12 @@ export async function startNexqlMcpHttp(options: {
   logPath: string;
   env?: NodeJS.ProcessEnv;
   readyTimeoutMs?: number;
-}): Promise<{ pid: number; command: string; version?: string }> {
+}): Promise<{
+  pid: number;
+  command: string;
+  version?: string;
+  waitForExit: Promise<void>;
+}> {
   const { runner, connectionString, httpPort, token, logPath, env } = options;
   const readyTimeoutMs = options.readyTimeoutMs ?? 30_000;
   // The bearer token is passed only through the NEXQL_MCP_HTTP_TOKEN env var
@@ -311,6 +316,13 @@ export async function startNexqlMcpHttp(options: {
     void err;
   });
 
+  // Resolves whenever the spawned nexql-mcp process terminates (DB down, crash,
+  // or graceful stop) so a supervisor can respawn it.
+  const waitForExit = new Promise<void>((resolveExit) => {
+    child.on("exit", () => resolveExit());
+    child.on("error", () => resolveExit());
+  });
+
   const deadline = Date.now() + readyTimeoutMs;
   let up = false;
   while (Date.now() < deadline) {
@@ -347,6 +359,7 @@ export async function startNexqlMcpHttp(options: {
     pid: child.pid,
     command: command.join(" "),
     ...(runner.version ? { version: runner.version } : {}),
+    waitForExit,
   };
 }
 
