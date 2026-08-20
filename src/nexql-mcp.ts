@@ -19,21 +19,27 @@ const execFileAsync = promisify(execFile);
  * shell. Instead of Node's `shell: true` (which triggers DEP0190 and can leave
  * a visible console window), the shim is invoked explicitly through %ComSpec%
  * with `/d /s /c` and a quoted command line — windowless via windowsHide, and
- * without the deprecated arg-concatenation path.
+ * without the deprecated arg-concatenation path. `windowsVerbatimArguments`
+ * mirrors what Node's own `shell: true` path sets (child_process.js): without
+ * it Node re-quotes the `/c` argument and cmd.exe fails to parse the command.
  */
-function winCommand(command: string[]): { file: string; args: string[] } {
+function winCommand(command: string[]): {
+  file: string;
+  args: string[];
+  windowsVerbatimArguments: boolean;
+} {
   const comspec = process.env.ComSpec ?? "cmd.exe";
-  const quote = (arg: string): string =>
-    arg.length === 0 || /[\s"&|<>^%]/.test(arg)
-      ? `"${arg.replace(/"/g, '\\"')}"`
-      : arg;
-  const commandLine = command.map(quote).join(" ");
-  return { file: comspec, args: ["/d", "/s", "/c", `"${commandLine}"`] };
+  return {
+    file: comspec,
+    args: ["/d", "/s", "/c", `"${command.join(" ")}"`],
+    windowsVerbatimArguments: true,
+  };
 }
 
 function commandForPlatform(command: string[]): {
   file: string;
   args: string[];
+  windowsVerbatimArguments?: boolean;
 } {
   return process.platform === "win32"
     ? winCommand(command)
@@ -53,10 +59,12 @@ function sleep(ms: number): Promise<void> {
 
 async function tryVersion(command: string[]): Promise<string | undefined> {
   try {
-    const { file, args } = commandForPlatform(command);
+    const { file, args, windowsVerbatimArguments } =
+      commandForPlatform(command);
     const { stdout, stderr } = await execFileAsync(file, args, {
       timeout: 60_000,
       windowsHide: true,
+      ...(windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
     });
     const text = `${stdout}\n${stderr}`.trim();
     if (!text) return undefined;
@@ -309,11 +317,16 @@ export async function startNexqlMcpHttp(options: {
   const logDir = dirname(logPath);
   mkdirSync(logDir, { recursive: true });
   const logStream = openSync(logPath, "a");
-  const { file, args: spawnArgs } = commandForPlatform(command);
+  const {
+    file,
+    args: spawnArgs,
+    windowsVerbatimArguments,
+  } = commandForPlatform(command);
   const child = spawn(file, spawnArgs, {
     detached: true,
     stdio: ["ignore", logStream, logStream],
     windowsHide: true,
+    ...(windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
     env: {
       ...process.env,
       ...env,
