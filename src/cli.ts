@@ -18,6 +18,7 @@ import {
 import {
   deploy as deployCommand,
   ensureFunnelReadiness,
+  ensureSshReadiness,
   resolveTags,
 } from "./deploy.js";
 import {
@@ -1011,6 +1012,20 @@ program
             : {}),
         });
         warnings.push(...readiness);
+        if (config.ssh) {
+          const sshReadiness = await ensureSshReadiness(
+            config,
+            deploymentTags,
+            {
+              yes: true,
+              applyPolicy: true,
+              ...(credentialEnvNameResolved
+                ? { credentialEnvName: credentialEnvNameResolved }
+                : {}),
+            },
+          );
+          warnings.push(...sshReadiness);
+        }
       }
       let resolvedTarget = target;
       const verifySeconds = options.verifyTimeout

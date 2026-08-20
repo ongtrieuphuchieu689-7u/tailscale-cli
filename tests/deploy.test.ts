@@ -8,6 +8,8 @@ import {
   parseExposure,
   resolveExposures,
   ensureFunnelReadiness,
+  resolveTags,
+  currentUsername,
 } from "../src/deploy.js";
 import { funnelCovered } from "../src/policy.js";
 import type { ResolvedConfig } from "../src/types.js";
@@ -270,5 +272,44 @@ describe("exposure parsing", () => {
 
   it("marks funnel exposures as public", () => {
     expect(resolveExposures(["3000"], true)[0]?.public).toBe(true);
+  });
+});
+
+describe("resolveTags auto-tagging", () => {
+  it("uses explicitly configured tags when present and ssh is false", () => {
+    const res = resolveTags({
+      ...readinessConfig,
+      ssh: false,
+      tags: ["tag:custom"],
+    });
+    expect(res).toEqual({ tags: ["tag:custom"], autoTagged: false });
+  });
+
+  it("derives deterministic tag when tags are empty even in dev profile when ssh is false", () => {
+    const res = resolveTags({
+      ...readinessConfig,
+      ssh: false,
+      profile: "dev",
+      tags: [],
+      hostname: "my-dev-box",
+    });
+    expect(res).toEqual({ tags: ["tag:my-dev-box"], autoTagged: true });
+  });
+
+  it("automatically appends tag:sshWhoami-<username> when ssh is true", () => {
+    const userSlug =
+      currentUsername()
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "user";
+    const res = resolveTags({
+      ...readinessConfig,
+      ssh: true,
+      profile: "dev",
+      tags: [],
+      hostname: "my-dev-box",
+    });
+    expect(res.tags).toEqual(["tag:my-dev-box", `tag:sshWhoami-${userSlug}`]);
+    expect(res.autoTagged).toBe(true);
   });
 });

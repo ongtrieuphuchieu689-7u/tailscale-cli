@@ -109,8 +109,8 @@ registry; the `1HHmm` form is always higher.
   (`--yes` or TTY).
 - Cleanup deletes only exact offline matches (hostname/tag + threshold) after confirmation.
 - Permission/scope failures are non-retryable: surface them, do not retry.
-- Auto-tags are deterministic and warn loudly. When `TS_TAGS` is unset (non-`dev`
-  profiles), `resolveTags` derives `tag:<repo-or-hostname>` and emits an `AUTO_TAG` warning;
-  auto-provisioning `tagOwners` for such tags happens only behind `--apply-policy`, and
-  never uses `autogroup:admin` as a silent fallback (missing/ambiguous ownership requires
+- Auto-tags are deterministic and warn loudly. When `TS_TAGS` is unset, `resolveTags`
+  derives `tag:<repo-or-hostname>` and emits an `AUTO_TAG` warning; auto-provisioning
+  `tagOwners` for such tags happens only behind `--apply-policy`, and never uses
+  `autogroup:admin` as a silent fallback (missing/ambiguous ownership requires
   `--tag-owner`/`TS_TAG_OWNER`).

@@ -71,6 +71,49 @@ export function funnelCovered(
   return targets.every((target) => existing.includes(target));
 }
 
+export interface SshRuleEntry {
+  action: "accept" | "check";
+  src: string[];
+  dst: string[];
+  users: string[];
+}
+
+export function sshRulesOf(policy: PolicyDocument | undefined): SshRuleEntry[] {
+  const value = policy?.ssh;
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is SshRuleEntry => {
+    if (!entry || typeof entry !== "object") return false;
+    const action = (entry as { action?: unknown }).action;
+    const src = (entry as { src?: unknown }).src;
+    const dst = (entry as { dst?: unknown }).dst;
+    const users = (entry as { users?: unknown }).users;
+    return (
+      (action === "accept" || action === "check") &&
+      Array.isArray(src) &&
+      Array.isArray(dst) &&
+      Array.isArray(users)
+    );
+  });
+}
+
+export function sshCovered(
+  policy: PolicyDocument | undefined,
+  tags: string[],
+): boolean {
+  const targets = normalizeTagsFor(policy, tags);
+  const rules = sshRulesOf(policy);
+  return targets.every((target) =>
+    rules.some(
+      (rule) =>
+        (rule.action === "accept" || rule.action === "check") &&
+        (rule.dst.includes(target) ||
+          rule.dst.includes("autogroup:self") ||
+          rule.dst.includes("autogroup:member") ||
+          rule.dst.includes("*")),
+    ),
+  );
+}
+
 function normalizeTagsFor(
   policy: PolicyDocument | undefined,
   tags: string[],
@@ -352,6 +395,78 @@ export async function ensureFunnelAccess(
   );
   const warnings = [
     `PROVISIONED_FUNNEL: added funnel node attribute for ${needed.join(", ")} via HuJSON-preserving write`,
+  ];
+  if (backup)
+    warnings.push(`POLICY_BACKUP: pre-write policy saved to ${backup}`);
+  return {
+    provisioned: true,
+    warnings,
+    ...(backup ? { backup } : {}),
+  };
+}
+
+export async function ensureSshAccess(
+  config: ResolvedConfig,
+  tags: string[],
+  options: {
+    yes: boolean;
+    credentialEnvName?: string;
+    backupDir?: string;
+  },
+): Promise<ProvisionResult> {
+  const api = new TailscaleApiClient(
+    config,
+    process.env,
+    options.credentialEnvName,
+  );
+  const current = await api.getPolicy();
+  const targets = tags.map(normalizeTag).filter(Boolean);
+  const sshTargets = targets.length ? targets : ["autogroup:member"];
+  const rules = sshRulesOf(current.json);
+  const needed = sshTargets.filter(
+    (target) =>
+      !rules.some(
+        (rule) =>
+          (rule.action === "accept" || rule.action === "check") &&
+          (rule.dst.includes(target) ||
+            rule.dst.includes("autogroup:self") ||
+            rule.dst.includes("autogroup:member") ||
+            rule.dst.includes("*")),
+      ),
+  );
+  if (!needed.length) return { provisioned: false, warnings: [] };
+
+  const raw = await api.getPolicyHuJson();
+  let merged = raw.content;
+  for (const target of needed)
+    merged = ensureHuJsonArrayItem(merged, "ssh", {
+      action: "accept",
+      src: ["autogroup:member"],
+      dst: [target],
+      users: ["autogroup:non-root", "root"],
+    });
+  if (merged === raw.content)
+    throw new Error(
+      "POLICY_HUJSON_MERGE_FAILED: could not locate ssh in the tailnet policy",
+    );
+  const approved = await confirm(
+    `Auto-add SSH policy accept rule for ${sshTargets.join(", ")} to the tailnet policy?`,
+    options.yes,
+  );
+  if (!approved)
+    throw new Error(
+      "POLICY_PROVISION_CONFIRMATION_REQUIRED: pass --yes to auto-enable SSH policy",
+    );
+  const { backup } = await syncPolicyHuJson(
+    api,
+    raw.content,
+    merged,
+    raw.etag,
+    needed,
+    options.backupDir,
+  );
+  const warnings = [
+    `PROVISIONED_SSH: added SSH policy accept rule for ${needed.join(", ")} via HuJSON-preserving write`,
   ];
   if (backup)
     warnings.push(`POLICY_BACKUP: pre-write policy saved to ${backup}`);

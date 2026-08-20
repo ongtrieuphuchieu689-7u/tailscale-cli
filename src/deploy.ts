@@ -1,3 +1,4 @@
+import os from "node:os";
 import type {
   Device,
   DeploymentResult,
@@ -12,7 +13,9 @@ import {
   ensureDeployTags,
   ensureFunnelAccess,
   ensureHttpsEnabled,
+  ensureSshAccess,
   funnelCovered,
+  sshCovered,
 } from "./policy.js";
 import { ensureDaemon } from "./daemon.js";
 
@@ -166,28 +169,59 @@ function isTagProvisionError(error: unknown): boolean {
   );
 }
 
+export function currentUsername(): string {
+  try {
+    return (
+      os.userInfo().username ||
+      process.env.USER ||
+      process.env.USERNAME ||
+      "user"
+    );
+  } catch {
+    return process.env.USER || process.env.USERNAME || "user";
+  }
+}
+
 export function resolveTags(config: ResolvedConfig): {
   tags: string[];
   autoTagged: boolean;
 } {
-  if (config.tags.length) return { tags: config.tags, autoTagged: false };
-  if (config.profile === "dev") return { tags: [], autoTagged: false };
-  const repo =
-    process.env.GITHUB_REPOSITORY ||
-    process.env.GITLAB_PROJECT_PATH ||
-    process.env.CI_PROJECT_PATH;
-  const base =
-    process.env.TS_TAG_BASE?.trim() ||
-    (repo
-      ? repo
-          .replace(/\//g, "-")
-          .replace(/[^a-z0-9-]+/gi, "-")
-          .toLowerCase()
-      : config.profile === "ci"
-        ? "tailsacle-cli"
-        : config.hostname);
-  const tag = `tag:${base.replace(/^-+|-+$/g, "") || "tailsacle-cli"}`;
-  return { tags: [tag], autoTagged: true };
+  let autoTagged = false;
+  let tags = [...config.tags];
+  if (!tags.length) {
+    const repo =
+      process.env.GITHUB_REPOSITORY ||
+      process.env.GITLAB_PROJECT_PATH ||
+      process.env.CI_PROJECT_PATH;
+    const base =
+      process.env.TS_TAG_BASE?.trim() ||
+      (repo
+        ? repo
+            .replace(/\//g, "-")
+            .replace(/[^a-z0-9-]+/gi, "-")
+            .toLowerCase()
+        : config.profile === "ci"
+          ? "tailsacle-cli"
+          : config.hostname);
+    const tag = `tag:${base.replace(/^-+|-+$/g, "") || "tailsacle-cli"}`;
+    tags = [tag];
+    autoTagged = true;
+  }
+
+  if (config.ssh) {
+    const user = currentUsername();
+    const userSlug =
+      user
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "user";
+    const sshTag = `tag:sshWhoami-${userSlug}`;
+    if (!tags.includes(sshTag)) {
+      tags.push(sshTag);
+    }
+  }
+
+  return { tags, autoTagged };
 }
 
 export async function ensureFunnelReadiness(
@@ -233,6 +267,54 @@ export async function ensureFunnelReadiness(
   });
   warnings.push(...provisioned.warnings);
   return warnings;
+}
+
+export async function ensureSshReadiness(
+  config: ResolvedConfig,
+  tags: string[],
+  options: {
+    yes: boolean;
+    applyPolicy?: boolean;
+    credentialEnvName?: string;
+    backupDir?: string;
+  },
+): Promise<string[]> {
+  if (!config.ssh) return [];
+  const api = new TailscaleApiClient(
+    config,
+    process.env,
+    options.credentialEnvName,
+  );
+  if (!api.hasCredentials()) return [];
+  let covered: boolean | undefined;
+  try {
+    const policy = await api.getPolicy();
+    covered = sshCovered(policy.json, tags);
+  } catch (error) {
+    if (error instanceof ApiError && [401, 403].includes(error.status))
+      return [
+        "SSH_POLICY_UNVERIFIABLE: no policy read scope, so SSH policy rule could not be verified",
+      ];
+    throw error;
+  }
+  if (covered) return [];
+  if (options.yes && options.applyPolicy) {
+    const warnings: string[] = [
+      "SIDE_EFFECT_PLAN: auto-adding SSH policy accept rule before deployment completes",
+    ];
+    const provisioned = await ensureSshAccess(config, tags, {
+      yes: options.yes,
+      ...(options.credentialEnvName
+        ? { credentialEnvName: options.credentialEnvName }
+        : {}),
+      ...(options.backupDir ? { backupDir: options.backupDir } : {}),
+    });
+    warnings.push(...provisioned.warnings);
+    return warnings;
+  }
+  return [
+    `SSH_POLICY_WARNING: tailnet policy does not explicitly permit SSH access for ${tags.join(", ") || "nodes"}; pass --apply-policy --yes to auto-provision an SSH policy accept rule`,
+  ];
 }
 
 export async function deploy(
@@ -370,6 +452,21 @@ export async function deploy(
   if (exposures.some((exposure) => exposure.public)) {
     warnings.push(
       ...(await ensureFunnelReadiness(config, tags, {
+        yes: options.yes,
+        ...(options.applyPolicy !== undefined
+          ? { applyPolicy: options.applyPolicy }
+          : {}),
+        ...(options.credentialEnvName
+          ? { credentialEnvName: options.credentialEnvName }
+          : {}),
+        ...(options.backupDir ? { backupDir: options.backupDir } : {}),
+      })),
+    );
+  }
+
+  if (config.ssh) {
+    warnings.push(
+      ...(await ensureSshReadiness(config, tags, {
         yes: options.yes,
         ...(options.applyPolicy !== undefined
           ? { applyPolicy: options.applyPolicy }

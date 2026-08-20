@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ensureDeployTags } from "../src/policy.js";
+import {
+  ensureDeployTags,
+  ensureSshAccess,
+  sshCovered,
+  sshRulesOf,
+} from "../src/policy.js";
 import type { ResolvedConfig } from "../src/types.js";
 
 const config: ResolvedConfig = {
@@ -142,6 +147,82 @@ describe("ensureDeployTags", () => {
       const body = String(postBody!.init!.body);
       expect(body).toContain('"tag:web": ["group:ops"]');
       expect(body).not.toContain('"tag:tag:group:ops"');
+    } finally {
+      rmSync(workDir, { recursive: true, force: true });
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("SSH policy checks and provisioning", () => {
+  it("parses ssh rules correctly", () => {
+    const policy = {
+      ssh: [
+        {
+          action: "accept",
+          src: ["autogroup:member"],
+          dst: ["tag:dev"],
+          users: ["autogroup:non-root", "root"],
+        },
+      ],
+    };
+    expect(sshRulesOf(policy)).toHaveLength(1);
+    expect(sshCovered(policy, ["dev"])).toBe(true);
+    expect(sshCovered(policy, ["prod"])).toBe(false);
+  });
+
+  it("auto-provisions SSH accept rule when tag is missing from ssh rules", async () => {
+    vi.stubEnv("TS_API_KEY", "tskey-api-test-key");
+    vi.stubEnv("TS_CLIENT_SECRET", "");
+
+    const basePolicy = { ssh: [] };
+    const provisionedPolicy = {
+      ssh: [
+        {
+          action: "accept",
+          src: ["autogroup:member"],
+          dst: ["tag:dev"],
+          users: ["autogroup:non-root", "root"],
+        },
+      ],
+    };
+
+    const calls = vi
+      .fn()
+      .mockReturnValueOnce(jsonResponse(basePolicy))
+      .mockReturnValueOnce(hujsonResponse('{\n  "ssh": []\n}', '"e2"'))
+      .mockReturnValueOnce(jsonResponse({}))
+      .mockReturnValueOnce(jsonResponse({}))
+      .mockReturnValueOnce(jsonResponse(provisionedPolicy));
+
+    const fetcher = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) => calls(),
+    );
+    vi.stubGlobal("fetch", fetcher);
+
+    const workDir = mkdtempSync(join(tmpdir(), "tscli-ssh-policy-"));
+    try {
+      const res = await ensureSshAccess(config, ["dev"], {
+        yes: true,
+        backupDir: workDir,
+      });
+
+      expect(res.provisioned).toBe(true);
+      expect(res.warnings.join("\n")).toContain("PROVISIONED_SSH");
+
+      const postBody = fetcher.mock.calls
+        .map(([input, init]) => ({ url: String(input), init }))
+        .find(
+          (c) =>
+            c.init &&
+            c.init.method === "POST" &&
+            c.url.endsWith("/tailnet/-/acl"),
+        );
+      expect(postBody).toBeDefined();
+      const body = String(postBody!.init!.body);
+      expect(body).toContain('"ssh"');
+      expect(body).toContain('"tag:dev"');
     } finally {
       rmSync(workDir, { recursive: true, force: true });
       vi.unstubAllGlobals();

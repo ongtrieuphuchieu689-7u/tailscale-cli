@@ -12,7 +12,12 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { cacheBinDir } from "./binary.js";
 import { stopUserspaceDaemon } from "./daemon.js";
-import { deploy, ensureFunnelReadiness, resolveTags } from "./deploy.js";
+import {
+  deploy,
+  ensureFunnelReadiness,
+  ensureSshReadiness,
+  resolveTags,
+} from "./deploy.js";
 import { ensureHttpsEnabled } from "./policy.js";
 import { TailscaleLocal, findTailscale } from "./tailscale.js";
 import { verifyEndpointReachable } from "./verify.js";
@@ -563,6 +568,18 @@ export async function runOpenCodeFlow(
         ...(options.backupDir ? { backupDir: options.backupDir } : {}),
       })),
     );
+    if (options.config.ssh) {
+      warnings.push(
+        ...(await ensureSshReadiness(options.config, deploymentTags, {
+          yes: options.yes,
+          ...(options.applyPolicy ? { applyPolicy: true } : {}),
+          ...(options.credentialEnvName
+            ? { credentialEnvName: options.credentialEnvName }
+            : {}),
+          ...(options.backupDir ? { backupDir: options.backupDir } : {}),
+        })),
+      );
+    }
     const target = `http://127.0.0.1:${options.port}`;
     const runFunnel = async (): Promise<void> => {
       await local.funnel(["--bg", "--yes", "--https=443", target]);
