@@ -163,7 +163,7 @@ describe("SSH policy checks and provisioning", () => {
           action: "accept",
           src: ["autogroup:member"],
           dst: ["tag:dev"],
-          users: ["autogroup:non-root", "root"],
+          users: ["autogroup:nonroot", "root"],
         },
       ],
     };
@@ -183,7 +183,7 @@ describe("SSH policy checks and provisioning", () => {
           action: "accept",
           src: ["autogroup:member"],
           dst: ["tag:dev"],
-          users: ["autogroup:non-root", "root"],
+          users: ["autogroup:nonroot", "root"],
         },
       ],
     };

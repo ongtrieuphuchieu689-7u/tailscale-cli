@@ -443,7 +443,7 @@ export async function ensureSshAccess(
       action: "accept",
       src: ["autogroup:member"],
       dst: [target],
-      users: ["autogroup:non-root", "root"],
+      users: ["autogroup:nonroot", "root"],
     });
   if (merged === raw.content)
     throw new Error(
