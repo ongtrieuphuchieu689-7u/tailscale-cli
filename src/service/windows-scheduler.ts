@@ -54,10 +54,19 @@ function taskCommand(config: ServiceConfig, logDir: string): string {
   const execArgs = config.script
     ? [config.script, ...config.args]
     : [cliEntrypoint(), ...config.args];
-  const outLog = `${logDir}\\out.log`;
-  const errLog = `${logDir}\\err.log`;
-  const innerArgs = execArgs.map((a) => `"${a}"`).join(" ");
-  const content = `@echo off\r\nif not exist "${logDir}" mkdir "${logDir}"\r\ncd /d "${config.workingDir}"\r\n"${nodeExecutable()}" ${innerArgs} >>"${outLog}" 2>>"${errLog}"\r\n`;
+  // (removed: outLog/errLog are now computed as safeOutLog/safeErrLog below)
+
+  // B11 fix: escape literal % in all arguments so cmd.exe does not expand
+  // them as environment-variable references (e.g. a token containing %FOO%
+  // would otherwise be silently replaced by the value of %FOO%).
+  const escapeBatchArg = (s: string): string => `"${s.replace(/%/g, "%%")}"`;
+  const innerArgs = execArgs.map(escapeBatchArg).join(" ");
+  // Also escape % in logDir / workingDir paths (rare but possible).
+  const safeLogDir = logDir.replace(/%/g, "%%");
+  const safeWorkingDir = config.workingDir.replace(/%/g, "%%");
+  const safeOutLog = `${safeLogDir}\\out.log`;
+  const safeErrLog = `${safeLogDir}\\err.log`;
+  const content = `@echo off\r\nif not exist "${safeLogDir}" mkdir "${safeLogDir}"\r\ncd /d "${safeWorkingDir}"\r\n"${nodeExecutable()}" ${innerArgs} >>"${safeOutLog}" 2>>"${safeErrLog}"\r\n`;
   writeFileSync(batchPath, content, "utf8");
   return `cmd /c "${batchPath}"`;
 }

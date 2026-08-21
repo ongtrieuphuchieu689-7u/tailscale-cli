@@ -1306,6 +1306,7 @@ import {
   parseRelayMapping,
   loadRelayConfigFile,
   type RelayMapping,
+  type MultiRelayInstance,
 } from "./relay.js";
 import {
   resolveNexqlMcpRunner,
@@ -1584,6 +1585,19 @@ program
   )
   .option("--log <path>", "path to append nexql-mcp output logs")
   .option(
+    "--primary-fallback",
+    "allow falling back to another reachable mapped database if mapping[0] is unreachable",
+  )
+  .option(
+    "--allow-partial",
+    "allow running healthy relays even if some ports fail to bind (degraded mode)",
+  )
+  .option(
+    "--connect-timeout <ms>",
+    "TCP connection timeout to target in milliseconds (default: 5000)",
+    "5000",
+  )
+  .option(
     "--serve",
     "also configure tailscale serve for all relay ports in the tailnet",
   )
@@ -1607,6 +1621,9 @@ program
       database?: string;
       dbRetryInterval?: string;
       mcpReadyTimeout?: string;
+      primaryFallback?: boolean;
+      allowPartial?: boolean;
+      connectTimeout?: string;
       log?: string;
       serve?: boolean;
       funnel?: boolean;
@@ -1706,35 +1723,43 @@ program
           );
         }
 
-        // MCP primary selection: mapping[0] is the documented default, but if
-        // its target is unreachable while another relayed database is up, the
-        // first reachable mapping becomes the primary so the MCP endpoint stays
-        // usable instead of respawning nexql-mcp forever. When nothing is
-        // reachable, mapping[0] stays primary and the supervisor retries.
-        const primaryProbes = await Promise.all(
-          mappings.map(async (m) => {
-            try {
-              await preflightTcpCheck({
-                host: m.targetHost,
-                port: m.targetPort,
-                timeoutMs: 3_000,
-              });
-              return true;
-            } catch {
-              return false;
-            }
-          }),
-        );
-        const reachable = primaryProbes
-          .map((ok, i) => (ok ? i : -1))
-          .filter((i) => i >= 0);
-        const primaryIndex =
-          reachable.length === 0 || reachable[0] === 0 ? 0 : reachable[0]!;
+        // MCP primary selection: mapping[0] is the configured default.
+        // When --primary-fallback is enabled and mapping[0] is unreachable while
+        // another relayed database is up, the first reachable mapping becomes
+        // the primary so the MCP endpoint stays usable instead of respawning
+        // nexql-mcp forever.
+        let primaryIndex = 0;
+        let primaryReason =
+          "mapping[0] is the configured primary DB (default; use --primary-fallback to allow failover)";
+        if (options.primaryFallback) {
+          const primaryProbes = await Promise.all(
+            mappings.map(async (m) => {
+              try {
+                await preflightTcpCheck({
+                  host: m.targetHost,
+                  port: m.targetPort,
+                  timeoutMs: 3_000,
+                });
+                return true;
+              } catch {
+                return false;
+              }
+            }),
+          );
+          const reachable = primaryProbes
+            .map((ok, i) => (ok ? i : -1))
+            .filter((i) => i >= 0);
+          primaryIndex =
+            reachable.length === 0 || reachable[0] === 0 ? 0 : reachable[0]!;
+          if (primaryIndex !== 0) {
+            const fb = mappings[primaryIndex]!;
+            primaryReason = `PRIMARY_FALLBACK: mapping[0] (${mappings[0]!.targetHost}:${mappings[0]!.targetPort}) unreachable; using first reachable mapping[${primaryIndex}] (${fb.targetHost}:${fb.targetPort}, database: ${fb.database ?? options.database ?? "postgres"}) as MCP primary`;
+          } else {
+            primaryReason =
+              "mapping[0] is the configured primary (target reachable)";
+          }
+        }
         const primary = mappings[primaryIndex]!;
-        const primaryReason =
-          primaryIndex === 0
-            ? "mapping[0] is the configured primary (target reachable)"
-            : `PRIMARY_FALLBACK: mapping[0] (${mappings[0]!.targetHost}:${mappings[0]!.targetPort}) unreachable; using first reachable mapping[${primaryIndex}] (${primary.targetHost}:${primary.targetPort}) as MCP primary`;
         const runner: NexqlMcpRunner = await resolveNexqlMcpRunner();
 
         // Console spam guard: identical relay errors are logged once per
@@ -1748,36 +1773,51 @@ program
         const quietJson = (): boolean =>
           Boolean(program.opts<{ json?: boolean }>().json);
 
-        multiRelay = await startMultiRelay(mappings, {
-          onConnection: (mapping, addr) => {
-            if (quietJson()) return;
-            const now = Date.now();
-            const last = lastConnectionByPort.get(mapping.listenPort) ?? 0;
-            if (now - last >= CONNECTION_LOG_INTERVAL_MS) {
-              lastConnectionByPort.set(mapping.listenPort, now);
-              console.error(
-                `[relay-mcp-postgres :${mapping.listenPort}] Connection from ${addr} -> forwarding to ${mapping.targetHost}:${mapping.targetPort}`,
-              );
-            }
-          },
-          onError: (mapping, err) => {
-            if (quietJson()) return;
-            if (lastErrorByPort.get(mapping.listenPort) === err.message) return;
-            lastErrorByPort.set(mapping.listenPort, err.message);
-            console.error(
-              `[relay-mcp-postgres :${mapping.listenPort}] Error: ${err.message}`,
-            );
-          },
-        });
+        const connectTimeoutMs = options.connectTimeout
+          ? Number(options.connectTimeout)
+          : 5_000;
 
-        // Every relay listener must be up before we hand the endpoint to
-        // nexql-mcp; the DB target itself is allowed to be down — the
-        // supervisor below respawns nexql-mcp as soon as the database becomes
-        // reachable.
-        for (const m of mappings) {
+        const resolvedMappings = mappings.map((m) => ({
+          ...m,
+          listenHost: m.listenHost ?? options.host ?? "0.0.0.0",
+        }));
+
+        multiRelay = await startMultiRelay(
+          resolvedMappings,
+          {
+            onConnection: (mapping, addr) => {
+              if (quietJson()) return;
+              const now = Date.now();
+              const last = lastConnectionByPort.get(mapping.listenPort) ?? 0;
+              if (now - last >= CONNECTION_LOG_INTERVAL_MS) {
+                lastConnectionByPort.set(mapping.listenPort, now);
+                console.error(
+                  `[relay-mcp-postgres :${mapping.listenPort}] Connection from ${addr} -> forwarding to ${mapping.targetHost}:${mapping.targetPort}`,
+                );
+              }
+            },
+            onError: (mapping, err) => {
+              if (quietJson()) return;
+              if (lastErrorByPort.get(mapping.listenPort) === err.message)
+                return;
+              lastErrorByPort.set(mapping.listenPort, err.message);
+              console.error(
+                `[relay-mcp-postgres :${mapping.listenPort}] Error: ${err.message}`,
+              );
+            },
+          },
+          {
+            allowPartial: Boolean(options.allowPartial),
+            connectTimeoutMs,
+          },
+        );
+
+        // Every successfully bound relay listener must be up before we hand the endpoint to
+        // nexql-mcp; the DB target itself is allowed to be down.
+        for (const r of (multiRelay as MultiRelayInstance).relays) {
           await preflightTcpCheck({
             host: "127.0.0.1",
-            port: m.listenPort,
+            port: r.mapping.listenPort,
             timeoutMs: 5_000,
           });
         }
@@ -1916,6 +1956,10 @@ program
               ...(m.database !== undefined ? { database: m.database } : {}),
             })),
             primaryDatabase: database,
+            degraded: Boolean((multiRelay as MultiRelayInstance).degraded),
+            ...((multiRelay as MultiRelayInstance).failed
+              ? { failedEndpoints: (multiRelay as MultiRelayInstance).failed }
+              : {}),
             mcpHttpUrl: `http://${mcpBind === "0.0.0.0" ? "0.0.0.0" : mcpBind}:${mcpPort}/mcp`,
             mcpToken: maskToken(token),
             connectionString: maskConnString(connectionString),

@@ -1,5 +1,8 @@
 # Usage
 
+> [!NOTE]
+> Detailed documentation for each CLI command/subcommand is available in its own file under **[`docs/usages/`](./usages/README.md)**.
+
 ## First run
 
 Run `tailsacle-cli doctor --detect-credentials --json` first. The command does not modify the tailnet or local Tailscale state; `doctor --deep` additionally runs read-only API probes (credentials, `devices:core`/`policy_file`/`dns`/`all` scopes, HTTPS, MagicDNS, funnel attribute readiness, daemon, root) with no side effects.
@@ -70,7 +73,9 @@ Policy writes require a fetched remote policy, diff, remote validation, local ba
   ```
   Flags `--user`/`--password`/`--database` and env vars act as fallbacks when the primary mapping does not set them. Password values in emitted JSON are always masked (`****…`).
 
-  **Primary fallback.** mapping[0] is the default MCP primary, but at startup every mapping target is probed (3s timeout): if mapping[0] is unreachable while another relayed database is up, the first reachable mapping becomes the primary (`PRIMARY_FALLBACK` warning; `primaryMappingIndex`/`primaryReason` in the envelope) so the MCP endpoint comes up immediately instead of respawning forever. When no target is reachable, mapping[0] stays primary and the supervisor keeps retrying.
+  **Primary fallback.** mapping[0] is the default MCP primary. When `--primary-fallback` is passed, startup probes each mapping target (3s timeout): if mapping[0] is unreachable while another relayed database is up, the first reachable mapping becomes the primary (`PRIMARY_FALLBACK` warning; `primaryMappingIndex`/`primaryReason` in the envelope) so the MCP endpoint comes up immediately instead of respawning forever.
+
+  **Degraded mode & IPv6.** `--allow-partial` permits healthy relays to stay running even if some ports fail to bind (e.g. `EADDRINUSE`), returning `degraded: true` in the output envelope. Relays fully support IPv6 address bracket syntax (e.g. `--map "[::1]:15433:[fd7a::1]:5433"`). All connections use automatic TCP keepalive (`30s`), `TCP_NODELAY`, and configurable `--connect-timeout` (default 5000ms).
 
   **Console noise control.** Repeated failures are logged once per state change: identical relay `Error:` lines are deduplicated, `Connection from` lines are throttled to one per port per 30s, and the supervisor's "database not reachable yet; retrying" line prints on change plus a heartbeat every 10th retry — a long outage no longer floods the terminal.
 - `dns --enable-magicdns --yes` enables MagicDNS on the tailnet; `dns --enable-magicdns --dry-run` previews the action without applying; plain `dns` reads nameservers/preferences/search paths.

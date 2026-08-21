@@ -1,0 +1,36 @@
+// multi-db.jsonc - Example multi-database relay configuration
+// Run with: tailsacle-cli relay-mcp-postgres --file multi-db.jsonc --mcp-port 8787 --mcp-bind 0.0.0.0 --allow-partial --primary-fallback
+[
+  {
+    // Mapping 0: Local default database (Primary by default)
+    "listen": 5431,
+    "target": "localhost:5432",
+    "user": "postgres",
+    "password": "local-dev-password",
+    "database": "postgres"
+  },
+  {
+    // Mapping 1: Remote staging database on LAN
+    "listen": 5433,
+    "target": "192.168.50.79:5433",
+    "user": "app_user",
+    "password": "staging_secret_pass",
+    "database": "app_staging"
+  },
+  {
+    // Mapping 2: Analytics database with special characters in password
+    "listen": 5437,
+    "target": "192.168.50.79:5437",
+    "user": "analytics_reader",
+    "password": "read%40pass/2026", // URL encoded special characters are decoded safely
+    "database": "analytics"
+  },
+  {
+    // Mapping 3: Remote database reached over Tailscale IPv6
+    "listen": 5436,
+    "target": "[fd7a:115c:a1e0::cc01:16b1]:5436",
+    "user": "postgres",
+    "password": "tailnet_db_password",
+    "database": "production_crm"
+  }
+]

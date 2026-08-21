@@ -108,6 +108,26 @@ describe("TCP Relay", () => {
     });
   });
 
+  // B9: IPv6 address support
+  it("should parse IPv6 bracketed addresses in relay mappings", () => {
+    // listen 5432 → target [fd7a::1]:5432
+    const m1 = parseRelayMapping("5432:[fd7a::1]:5432");
+    expect(m1).toEqual({
+      listenPort: 5432,
+      targetHost: "fd7a::1",
+      targetPort: 5432,
+    });
+
+    // listen [::1]:5432 → target [fd7a::1]:5433
+    const m2 = parseRelayMapping("[::1]:5432:[fd7a::1]:5433");
+    expect(m2).toEqual({
+      listenHost: "::1",
+      listenPort: 5432,
+      targetHost: "fd7a::1",
+      targetPort: 5433,
+    });
+  });
+
   it("should load mappings from json/jsonc config files", () => {
     const tempFile = "temp-relay-test-config.json";
     tempFiles.push(tempFile);
@@ -146,6 +166,40 @@ describe("TCP Relay", () => {
     expect(loaded[2]!.database).toBe("appdb");
   });
 
+  // B3: JSONC files with connection strings containing "//" must not be corrupted
+  it("should load JSONC config with postgres:// URLs and comments without corruption (B3)", () => {
+    const tempFile = "temp-relay-test-jsonc.jsonc";
+    tempFiles.push(tempFile);
+    writeFileSync(
+      tempFile,
+      `// Relay config — production mappings
+[
+  // Postgres primary
+  {
+    "listen": 15432,
+    "target": "192.168.50.79:5432", // direct host
+    "password": "pass@with//slash"
+  },
+  // staging
+  {
+    "listen": 15433,
+    "targetHost": "staging.db.internal",
+    "targetPort": 5432
+  }
+]
+`,
+    );
+
+    const loaded = loadRelayConfigFile(tempFile);
+    expect(loaded).toHaveLength(2);
+    expect(loaded[0]!.listenPort).toBe(15432);
+    expect(loaded[0]!.targetHost).toBe("192.168.50.79");
+    expect(loaded[0]!.targetPort).toBe(5432);
+    // password must NOT be truncated by // stripping (B3)
+    expect(loaded[0]!.password).toBe("pass@with//slash");
+    expect(loaded[1]!.targetHost).toBe("staging.db.internal");
+  });
+
   it("should run multi-relay for multiple ports simultaneously", async () => {
     echoServer1 = net.createServer((sock) => {
       sock.write("PORT1_OK");
@@ -164,20 +218,23 @@ describe("TCP Relay", () => {
     const targetPort1 = (echoServer1.address() as net.AddressInfo).port;
     const targetPort2 = (echoServer2.address() as net.AddressInfo).port;
 
-    multiRelay = await startMultiRelay([
-      {
-        listenPort: 0,
-        targetHost: "127.0.0.1",
-        targetPort: targetPort1,
-        listenHost: "127.0.0.1",
-      },
-      {
-        listenPort: 0,
-        targetHost: "127.0.0.1",
-        targetPort: targetPort2,
-        listenHost: "127.0.0.1",
-      },
-    ]);
+    multiRelay = await startMultiRelay(
+      [
+        {
+          listenPort: 0,
+          targetHost: "127.0.0.1",
+          targetPort: targetPort1,
+          listenHost: "127.0.0.1",
+        },
+        {
+          listenPort: 0,
+          targetHost: "127.0.0.1",
+          targetPort: targetPort2,
+          listenHost: "127.0.0.1",
+        },
+      ],
+      undefined,
+    );
 
     expect(multiRelay.relays).toHaveLength(2);
     const relayPort1 = (
@@ -206,5 +263,63 @@ describe("TCP Relay", () => {
       });
     });
     expect(res2).toBe("PORT2_OK");
+  });
+
+  // Degraded mode: when allowPartial=true, one bind failure doesn't kill healthy relays
+  it("should support degraded mode (allowPartial): one bind-fail leaves others running", async () => {
+    echoServer1 = net.createServer((sock) => {
+      sock.write("HEALTHY");
+    });
+    await new Promise<void>((res) =>
+      echoServer1!.listen(0, "127.0.0.1", () => res()),
+    );
+    const targetPort1 = (echoServer1.address() as net.AddressInfo).port;
+
+    // Grab a port to force EADDRINUSE for the second mapping
+    const blocker = net.createServer();
+    await new Promise<void>((res) =>
+      blocker.listen(0, "127.0.0.1", () => res()),
+    );
+    const blockedPort = (blocker.address() as net.AddressInfo).port;
+
+    multiRelay = await startMultiRelay(
+      [
+        {
+          listenPort: 0,
+          targetHost: "127.0.0.1",
+          targetPort: targetPort1,
+          listenHost: "127.0.0.1",
+        },
+        {
+          // This mapping will fail to bind because `blocker` owns the port.
+          listenPort: blockedPort,
+          targetHost: "127.0.0.1",
+          targetPort: targetPort1,
+          listenHost: "127.0.0.1",
+        },
+      ],
+      undefined,
+      { allowPartial: true },
+    );
+
+    // Cleanup blocker
+    await new Promise<void>((res) => blocker.close(() => res()));
+
+    expect(multiRelay.degraded).toBe(true);
+    expect(multiRelay.failed).toHaveLength(1);
+    expect(multiRelay.relays).toHaveLength(1);
+
+    // The healthy relay must still serve data
+    const relayPort = (
+      multiRelay.relays[0]!.instance.server.address() as net.AddressInfo
+    ).port;
+    const data = await new Promise<string>((resolve) => {
+      const c = net.connect({ host: "127.0.0.1", port: relayPort });
+      c.on("data", (d) => {
+        resolve(d.toString());
+        c.end();
+      });
+    });
+    expect(data).toBe("HEALTHY");
   });
 });

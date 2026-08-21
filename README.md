@@ -68,8 +68,26 @@ npx tailscale-cli-opencode --yes --apply-policy --enable-https --json
 - `--stop` tears down the tracked opencode serve and the userspace tailscaled.
 
 
+## PostgreSQL TCP Relays & NexQL MCP (`relay-mcp-postgres`)
+
+Relay one or more PostgreSQL databases across machines/Tailnets and simultaneously serve a [nexql-mcp](https://www.npmjs.com/package/nexql-mcp) HTTP MCP server so AI agents (Cursor, Claude Desktop, Antigravity, OpenCode) can explore live schema and query any relayed database:
+
+```bash
+# Multi-DB relay from config file + MCP on :8787 accessible via Tailnet
+tailsacle-cli relay-mcp-postgres \
+  --file examples/relay-mcp-postgres/multi-db.jsonc \
+  --mcp-port 8787 \
+  --mcp-bind 0.0.0.0 \
+  --token "$MCP_TOKEN" \
+  --allow-partial \
+  --primary-fallback
+```
+
+See **[`docs/relay-mcp-postgres.md`](./docs/relay-mcp-postgres.md)** for the complete guide, flag reference, and client connection setups; see **[`examples/relay-mcp-postgres/`](./examples/relay-mcp-postgres/)** for ready-to-use sample configs and service scripts.
+
 ## Examples
 
+- `examples/relay-mcp-postgres/` — Complete configuration examples for 1 DB, multi-DB, systemd/Windows services, and AI Agent MCP client setup.
 - `examples/colab/opencode-funnel-colab.sh` — one-cell Google Colab script:
   installs Node.js 22+ and `tailsacle-cli`, then delegates everything to a
   single `tailscale-cli-opencode --install --yes --apply-policy --enable-https`

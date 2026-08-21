@@ -1,0 +1,28 @@
+// service-systemd.jsonc - Configuration for running relay-mcp-postgres as a Linux systemd service
+// Install with: tailsacle-cli service install --file service-systemd.jsonc --user --yes
+{
+  "name": "tailscale-postgres-relay",
+  "description": "Tailscale PostgreSQL Relay and NexQL HTTP MCP Server",
+  "workingDir": "/home/app/relays",
+  "args": [
+    "relay-mcp-postgres",
+    "--file", "/home/app/relays/multi-db.jsonc",
+    "--mcp-port", "8787",
+    "--mcp-bind", "0.0.0.0",
+    "--allow-partial",
+    "--primary-fallback",
+    "--db-retry-interval", "5000"
+  ],
+  "env": {
+    "NEXQL_MCP_HTTP_TOKEN": "replace-with-your-secure-mcp-token"
+  },
+  "restart": {
+    "policy": "always",
+    "delaySeconds": 5
+  },
+  "log": {
+    "dir": "/home/app/.tailsacle-cli/logs/postgres-relay",
+    "maxSizeMb": 10,
+    "keepFiles": 5
+  }
+}

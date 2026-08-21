@@ -208,6 +208,30 @@ export class WindowsServiceManager implements ServiceManager {
   ): Promise<ServiceInstallResult> {
     const serviceDir = windowsServiceDir(config.name);
     mkdirSync(serviceDir, { recursive: true });
+    // B10 fix: tighten ACL on the service directory so that the WinSW XML
+    // (which contains env vars including PGPASSWORD) is not readable by
+    // unprivileged users.  ProgramData defaults give "Users" read access;
+    // we remove inherited permissions and grant only SYSTEM + Administrators.
+    try {
+      spawnSync(
+        "icacls",
+        [
+          serviceDir,
+          "/inheritance:r",
+          "/grant:r",
+          "SYSTEM:(OI)(CI)F",
+          "/grant:r",
+          "Administrators:(OI)(CI)F",
+        ],
+        { encoding: "utf8" },
+      );
+    } catch {
+      // Non-fatal: icacls may be unavailable in some environments; log a
+      // warning but do not abort the install.
+      console.warn(
+        `[tailsacle-service] WARNING: could not tighten ACL on ${serviceDir}; secrets in ${config.name}.xml may be readable by other users`,
+      );
+    }
     const winsw = loadWinSwBinary();
     const cliPath = cliEntrypoint();
     const nodePath = nodeExecutable();

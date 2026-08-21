@@ -15,10 +15,24 @@ import {
 } from "../src/nexql-mcp.js";
 
 describe("nexql-mcp helpers", () => {
-  it("should mask the password in a connection string", () => {
+  it("should mask the password in a URL-style connection string", () => {
     expect(
       maskConnString("postgres://postgres:secret123@127.0.0.1:5432/postgres"),
     ).toBe("postgres://postgres:***@127.0.0.1:5432/postgres");
+  });
+
+  // B7: libpq keyword-style connection strings must also be masked
+  it("should mask password= in libpq keyword connection strings (B7)", () => {
+    expect(
+      maskConnString(
+        "host=db port=5433 user=admin password=topsecret dbname=mydb",
+      ),
+    ).toBe("host=db port=5433 user=admin password=*** dbname=mydb");
+
+    // Case-insensitive
+    expect(maskConnString("PASSWORD=mysecret host=db")).toBe(
+      "PASSWORD=*** host=db",
+    );
   });
 
   it("should strip the password for argv-safe connection strings", () => {
@@ -40,6 +54,19 @@ describe("nexql-mcp helpers", () => {
     ).toBe(undefined);
   });
 
+  // B8: percent-encoded passwords must be decoded
+  it("should URL-decode percent-encoded passwords (B8)", () => {
+    // %40 = @, should decode to "@" not "%40"
+    expect(
+      passwordFromConnString("postgres://user:p%40ssw%2Ford@127.0.0.1:5432/db"),
+    ).toBe("p@ssw/ord");
+
+    // plain password (no encoding) should still work
+    expect(
+      passwordFromConnString("postgres://user:plainpass@127.0.0.1:5432/db"),
+    ).toBe("plainpass");
+  });
+
   it("should mask and generate tokens safely", () => {
     expect(maskToken("")).toBe("***");
     expect(maskToken("ab")).toBe("***");
@@ -48,6 +75,16 @@ describe("nexql-mcp helpers", () => {
     expect(t).toHaveLength(32);
     expect(randomToken(16)).toHaveLength(16);
     expect(t).not.toBe(randomToken());
+  });
+
+  // B14: randomToken must use only chars from the alphabet (no modulo bias visible here
+  // but we can check that every character is in the expected set)
+  it("should produce tokens using only alphanumeric characters (B14 rejection sampling)", () => {
+    const chars =
+      /^[ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789]+$/;
+    for (let i = 0; i < 50; i++) {
+      expect(randomToken(32)).toMatch(chars);
+    }
   });
 
   it("should resolve preflight TCP checks for reachable and unreachable targets", async () => {

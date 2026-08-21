@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "tailscale-postgres-relay": {
+      "url": "http://100.69.183.44:8787/mcp",
+      "headers": {
+        "Authorization": "Bearer replace-with-your-secure-mcp-token"
+      }
+    }
+  }
+}

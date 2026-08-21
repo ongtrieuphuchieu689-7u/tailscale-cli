@@ -18,6 +18,7 @@ máy ảo…).
 | **Echo HTTP server** qua tailnet — serve HTTP (MagicDNS) + TCP forwarder (IP trực tiếp) | [tailscale-echo-server.yml](../.github/workflows/tailscale-echo-server.yml) | [tailscale-echo-server.yml](./workflows/tailscale-echo-server.yml) | [echo-server.mjs](./echo-server.mjs) |
 | **PostgreSQL** nhẹ (Docker) qua tailnet — truy cập bằng psql/DBeaver qua IP hoặc MagicDNS | [tailscale-postgres.yml](../.github/workflows/tailscale-postgres.yml) | [tailscale-postgres.yml](./workflows/tailscale-postgres.yml) | — |
 | **TCP Relay / Trạm trung chuyển Postgres** — chuyển tiếp traffic TCP sang server khác | [tailscale-tcp-relay.yml](../.github/workflows/tailscale-tcp-relay.yml) | [tailscale-tcp-relay.yml](./workflows/tailscale-tcp-relay.yml) | — |
+| **Postgres Relay & NexQL MCP Server** — chuyển tiếp đa DB, phục vụ AI agent qua MCP | — | [relay-mcp-postgres/](./relay-mcp-postgres/README.md) | [single-db.sh](./relay-mcp-postgres/single-db.sh), [multi-db.jsonc](./relay-mcp-postgres/multi-db.jsonc) |
 | **Matrix Test: HTTP + Postgres Relay + Serve + Funnel** — chạy song song các job kiểm thử | [tailscale-relay-matrix.yml](../.github/workflows/tailscale-relay-matrix.yml) | [tailscale-relay-matrix.yml](./workflows/tailscale-relay-matrix.yml) | — |
 
 > ⚠️ **Ghi nhận trạng thái kiểm thử:**
