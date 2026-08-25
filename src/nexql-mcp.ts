@@ -585,6 +585,7 @@ export async function startNexqlMcpHttp(options: {
     String(httpPort),
     ...(options.bind ? ["--bind", options.bind] : []),
     ...(hasProfiles ? options.profiles!.flatMap((p) => ["--profile", p]) : []),
+        "--i-know-what-im-doing",
   ];
   const command = [runner.command[0]!, ...args];
   const logDir = dirname(logPath);
