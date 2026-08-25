@@ -2,6 +2,8 @@
 
 Tài liệu này cung cấp hướng dẫn đầy đủ, chi tiết từng tham số (arguments), tình huống triển khai (1 DB, nhiều DB, CLI vs File cấu hình, Tailscale, Background Service) và cách kết nối từ AI Agents (Cursor, Claude Desktop, Antigravity, OpenCode) cũng như Direct TCP Clients (psql, DBeaver, Prisma).
 
+> **Windows?** Xem thêm: **[`docs/usages/relay-mcp-postgres-win.md`](usages/relay-mcp-postgres-win.md)** — hướng dẫn chuyên biệt cho Windows: chạy nền, service, troubleshoot.
+
 ---
 
 ## 1. Bảng Tham số (Arguments & Options) Đầy đủ

@@ -17,6 +17,7 @@ Tài liệu chi tiết cho từng lệnh (subcommand) của `tailsacle-cli` (và
 | **`serve`** | [`serve.md`](./serve.md) | Chia sẻ dịch vụ nội bộ bên trong mạng Tailnet (HTTP route hoặc TCP raw forwarder). |
 | **`relay`** | [`relay.md`](./relay.md) | Trạm trung chuyển TCP relay proxy hiệu năng cao (đơn cổng, đa cổng, file config, IPv6, keepalive). |
 | **`relay-mcp-postgres`** | [`relay-mcp-postgres.md`](./relay-mcp-postgres.md) | TCP Relay PostgreSQL kết hợp máy chủ NexQL HTTP MCP phục vụ AI Agent truy vấn live schema. |
+| **`relay-mcp-postgres` (Windows)** | [`relay-mcp-postgres-win.md`](./relay-mcp-postgres-win.md) | Hướng dẫn triển khai `relay-mcp-postgres` trên Windows: cài đặt, chạy nền, service, troubleshoot. |
 | **`dns`** | [`dns.md`](./dns.md) | Đọc cấu hình DNS tailnet, nameservers và hỗ trợ bật MagicDNS có kiểm soát. |
 | **`policy`** | [`policy.md`](./policy.md) | Đồng bộ ACL policy Tailnet an toàn: fetch → diff → validate → backup → ETag-protected write. |
 | **`cleanup`** | [`cleanup.md`](./cleanup.md) | Quét và dọn dẹp các thiết bị offline khớp chính xác hostname/tags sau xác nhận bảo vệ. |

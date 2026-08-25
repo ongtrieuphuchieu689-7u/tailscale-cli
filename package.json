@@ -1,6 +1,6 @@
 {
   "name": "tailsacle-cli",
-  "version": "1.260821.10848",
+  "version": "1.260825.10915",
   "private": false,
   "type": "module",
   "engines": {
@@ -50,7 +50,7 @@
     "version:bump:verify": "node scripts/bump-version.mjs --verify",
     "deploy:secret-ongtrieuphuchieu689-7u": "ghcli .env.ongtrieuphuchieu689-7u",
     "deploy:secret-othauip8plus-dn": "ghcli .env.othauip8plus-dn",
-    "mcp-serve": "node dist/cli.js relay-mcp-postgres --file docs/deploy/relay-mcp-postgres.json --mcp-port 8787 --token test-secret-token-12345678 --json"
+    "mcp-serve": "node dist/cli.js relay-mcp-postgres --file docs/deploy/relay-mcp-postgres.json --mcp-port 8787 --mcp-bind 0.0.0.0 --token test-secret-token-12345678 --json --funnel --serve"
   },
   "dependencies": {
     "@inquirer/prompts": "^8.5.2",

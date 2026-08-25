@@ -7,9 +7,13 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
+  mkdtempSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import net from "node:net";
@@ -524,6 +528,8 @@ export async function startNexqlMcpHttp(options: {
   bind?: string;
   env?: NodeJS.ProcessEnv;
   readyTimeoutMs?: number;
+  profiles?: string[];
+  workspaceRoot?: string;
 }): Promise<{
   pid: number;
   command: string;
@@ -567,13 +573,18 @@ export async function startNexqlMcpHttp(options: {
   // --http-token flag is absent. The DB password likewise travels only via
   // PGPASSWORD, so the argv connection string carries no password.
   const password = passwordFromConnString(connectionString);
+  const hasProfiles = options.profiles && options.profiles.length > 0;
+
+  // When profiles are provided, skip the connection string arg —
+  // nexql-mcp will load profiles from its config file instead.
   const args = [
     ...runner.command.slice(1),
-    connStringWithoutPassword(connectionString),
+    ...(!hasProfiles ? [connStringWithoutPassword(connectionString)] : []),
     "--http",
     "--http-port",
     String(httpPort),
     ...(options.bind ? ["--bind", options.bind] : []),
+    ...(hasProfiles ? options.profiles!.flatMap((p) => ["--profile", p]) : []),
   ];
   const command = [runner.command[0]!, ...args];
   const logDir = dirname(logPath);
@@ -607,6 +618,7 @@ export async function startNexqlMcpHttp(options: {
       detached: true,
       stdio: ["ignore", logStream, logStream],
       windowsHide: true,
+      ...(options.workspaceRoot ? { cwd: options.workspaceRoot } : {}),
       ...(windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
       env: {
         ...process.env,
@@ -614,6 +626,9 @@ export async function startNexqlMcpHttp(options: {
         NEXQL_MCP_HTTP_TOKEN: token,
         NEXQL_MCP_SPAWN_NONCE: spawnNonce,
         ...(password === undefined ? {} : { PGPASSWORD: password }),
+        ...(options.workspaceRoot
+          ? { NEXQL_MCP_WORKSPACE_ROOT: options.workspaceRoot }
+          : {}),
       },
     });
   } catch (spawnErr) {
@@ -755,6 +770,85 @@ export async function stopNexqlMcpHttp(): Promise<{
 export function maskToken(value: string): string {
   if (!value) return "***";
   return value.length < 10 ? "***" : `${value.slice(0, 5)}…${value.slice(-3)}`;
+}
+
+/**
+ * Register relay configs as nexql-mcp profiles so the MCP server knows about
+ * all databases. Each relay becomes a named profile that agents can switch
+ * to via the `switch_connection` tool.
+ *
+ * Writes directly to the global nexql-mcp config (~/.config/nexql-mcp/config.toml)
+ * because --profile flag only reads from global config, not workspace config.
+ * Passwords are stored as separate .pw files in the cache bin dir.
+ */
+export async function registerRelayProfiles(options: {
+  runner: NexqlMcpRunner;
+  mappings: Array<{
+    listenPort: number;
+    targetHost: string;
+    targetPort: number;
+    user?: string;
+    password?: string;
+    database?: string;
+    name?: string;
+    accessMode?: string;
+  }>;
+  defaultProfile?: string;
+}): Promise<void> {
+  const { runner, mappings, defaultProfile } = options;
+
+  // Global config dir: ~/.config/nexql-mcp/
+  const home = process.env.USERPROFILE ?? process.env.HOME ?? "";
+  const configDir = joinPath(home, ".config", "nexql-mcp");
+  mkdirSync(configDir, { recursive: true });
+
+  const pwDir = joinPath(cacheBinDir(), "profile-pw");
+  mkdirSync(pwDir, { recursive: true });
+
+  const defaultName =
+    defaultProfile ?? mappings[0]?.name ?? `relay-${mappings[0]?.listenPort}`;
+
+  const lines: string[] = [`default_profile = "${defaultName}"`, ""];
+
+  for (const m of mappings) {
+    const profileName = m.name ?? `relay-${m.listenPort}`;
+    const user = m.user ?? "postgres";
+    const database = m.database ?? "postgres";
+    const password = m.password ?? "";
+    const accessMode = m.accessMode ?? "read";
+
+    const pwFile = joinPath(pwDir, `${profileName}.pw`);
+    writeFileSync(pwFile, password, "utf8");
+
+    lines.push(`[profiles.${profileName}]`);
+    lines.push(`host = "127.0.0.1"`);
+    lines.push(`port = ${m.listenPort}`);
+    lines.push(`dbname = "${database}"`);
+    lines.push(`user = "${user}"`);
+    lines.push(`password_file = '${pwFile}'`);
+    lines.push(`access_mode = "${accessMode}"`);
+    lines.push(`schemas = []`);
+    lines.push(`deny_schemas = []`);
+    lines.push(`deny_tables = []`);
+    lines.push(`pii_columns = []`);
+    lines.push("");
+  }
+
+  writeFileSync(joinPath(configDir, "config.toml"), lines.join("\n"), "utf8");
+
+  // nexql-mcp rotates config.toml → config.toml.bak-<epoch_ms> on every
+  // start; a supervisor respawn loop (DB down) would bloat the directory
+  // indefinitely. Prune old backups, keeping the most recent few.
+  try {
+    const baks = readdirSync(configDir)
+      .filter((f) => /^config\.toml\.bak-/.test(f))
+      .sort();
+    for (const f of baks.slice(0, Math.max(0, baks.length - 5))) {
+      rmSync(joinPath(configDir, f), { force: true });
+    }
+  } catch {
+    // best-effort cleanup
+  }
 }
 
 /**

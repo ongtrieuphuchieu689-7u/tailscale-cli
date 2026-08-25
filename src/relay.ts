@@ -13,6 +13,8 @@ export interface RelayMapping {
   user?: string | undefined;
   password?: string | undefined;
   database?: string | undefined;
+  name?: string | undefined;
+  accessMode?: string | undefined;
 }
 
 export interface RelayOptions {
@@ -344,6 +346,9 @@ export function loadRelayConfigFile(filePath: string): RelayMapping[] {
         user: obj.user !== undefined ? String(obj.user) : undefined,
         password: obj.password !== undefined ? String(obj.password) : undefined,
         database: obj.database !== undefined ? String(obj.database) : undefined,
+        name: obj.name !== undefined ? String(obj.name) : undefined,
+        accessMode:
+          obj.accessMode !== undefined ? String(obj.accessMode) : undefined,
       });
     }
   }

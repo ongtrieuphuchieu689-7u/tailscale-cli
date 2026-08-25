@@ -15,3 +15,9 @@ opencode.json
 opencode-serve.log
 serve-pass.txt
 docs/deploy
+relay-err.log
+relay-out.log
+relay-output.log
+thu-run.log
+thu.bat
+.nexql/config.toml

@@ -42,6 +42,7 @@ import {
 import { funnelPublicDnsPropagated } from "./dns.js";
 import { manifest } from "./manifest.js";
 import {
+  ensureDeployTags,
   ensureFunnelAccess,
   ensureHttpsEnabled,
   funnelCovered,
@@ -1313,6 +1314,7 @@ import {
   preflightTcpCheck,
   startNexqlMcpHttp,
   stopNexqlMcpHttp,
+  registerRelayProfiles,
   maskConnString,
   maskToken,
   randomToken,
@@ -1461,28 +1463,66 @@ program
         const wantsFunnel = options.funnel || mappings.some((m) => m.funnel);
 
         if (wantsServe || wantsFunnel) {
-          const local = new TailscaleLocal(await findTailscale());
-          for (const m of mappings) {
-            if (options.serve || m.serve) {
-              await local.serve([
-                "--bg",
-                "--yes",
-                `--tcp=${m.listenPort}`,
-                `tcp://127.0.0.1:${m.listenPort}`,
-              ]);
-              actions.push(
-                `configured Tailscale Serve on TCP port ${m.listenPort}`,
+          if (process.platform === "win32") {
+            const daemon = await inspectDaemon();
+            if (!daemon.running) {
+              throw new Error(
+                `TAILSCALED_NOT_RUNNING: Tailscale daemon (service) is not running.\n` +
+                  `  Start it with: net start Tailscale\n` +
+                  `  Or open Tailscale GUI app and sign in.\n` +
+                  `  Without the daemon, "tailscale serve/funnel" cannot work.`,
               );
             }
-            if (options.funnel || m.funnel) {
-              await local.funnel([
-                "--bg",
-                `--tcp=${m.listenPort}`,
-                `tcp://127.0.0.1:${m.listenPort}`,
-              ]);
-              actions.push(
-                `configured Tailscale Funnel on TCP port ${m.listenPort}`,
-              );
+          }
+          const local = new TailscaleLocal(await findTailscale());
+          for (const m of mappings) {
+            try {
+              if (options.serve || m.serve) {
+                await local.serve([
+                  "--bg",
+                  "--yes",
+                  `--tcp=${m.listenPort}`,
+                  `tcp://127.0.0.1:${m.listenPort}`,
+                ]);
+                actions.push(
+                  `configured Tailscale Serve on TCP port ${m.listenPort}`,
+                );
+              }
+              if (options.funnel || m.funnel) {
+                await local.funnel([
+                  "--bg",
+                  `--tcp=${m.listenPort}`,
+                  `tcp://127.0.0.1:${m.listenPort}`,
+                ]);
+                actions.push(
+                  `configured Tailscale Funnel on TCP port ${m.listenPort}`,
+                );
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              if (
+                process.platform === "win32" &&
+                msg.includes("ProtectedPrefix\\Administrators")
+              ) {
+                throw new Error(
+                  `TAILSCALE_SERVE_REQUIRES_ADMIN: configuring "tailscale serve/funnel" on Windows requires an elevated terminal (Run as Administrator).\n` +
+                    `  Option 1 (Recommended): remove "--serve" and "--funnel". All TCP relays listening on 0.0.0.0 are ALREADY accessible directly over Tailscale (e.g. 100.x.y.z:${m.listenPort}) without needing tailscale serve.\n` +
+                    `  Option 2: open PowerShell / Command Prompt with "Run as Administrator" and re-run with --serve/--funnel.`,
+                );
+              }
+              if (
+                process.platform === "win32" &&
+                msg.includes("cannot find the file specified")
+              ) {
+                throw new Error(
+                  `TAILSCALED_NOT_RUNNING: "tailscale serve/funnel" failed because the Tailscale daemon (service) cannot be reached.\n` +
+                    `  1. Ensure Tailscale is installed and the service is running: net start Tailscale\n` +
+                    `  2. Sign in via the Tailscale GUI app\n` +
+                    `  3. Re-run this command\n` +
+                    `  Or remove "--serve"/"--funnel" — TCP relays on 0.0.0.0 are ALREADY accessible over Tailscale directly.`,
+                );
+              }
+              throw err;
             }
           }
         }
@@ -1605,6 +1645,15 @@ program
     "--funnel",
     "also configure tailscale funnel for all relay ports publicly (requires --serve)",
   )
+  .option(
+    "--apply-policy",
+    "allow HuJSON-preserving tagOwners/nodeAttrs provisioning for funnel/serve (requires --serve or --funnel)",
+  )
+  .option(
+    "--enable-https",
+    "enable tailnet-wide HTTPS before configuring funnel (required for Funnel; only applied when --funnel is set)",
+  )
+  .option("--yes", "skip confirmation prompts for policy/HTTPS operations")
   .action(
     async (options: {
       listen?: string;
@@ -1627,6 +1676,9 @@ program
       log?: string;
       serve?: boolean;
       funnel?: boolean;
+      applyPolicy?: boolean;
+      enableHttps?: boolean;
+      yes?: boolean;
     }) => {
       const start = performance.now();
       let multiRelay:
@@ -1837,24 +1889,201 @@ program
 
         const wantsServe = options.serve || mappings.some((m) => m.serve);
         const wantsFunnel = options.funnel || mappings.some((m) => m.funnel);
+        let serveSkipWarning: string | undefined;
 
         if (wantsServe || wantsFunnel) {
-          const local = new TailscaleLocal(await findTailscale());
-          for (const m of mappings) {
-            if (options.serve || m.serve) {
-              await local.serve([
-                "--bg",
-                "--yes",
-                `--tcp=${m.listenPort}`,
-                `tcp://127.0.0.1:${m.listenPort}`,
-              ]);
+          // Auto-provision funnel readiness (HTTPS + node attribute) when requested
+          if (wantsFunnel && (options.applyPolicy || options.enableHttps)) {
+            const config = resolveConfig(configEnv());
+            const credentialEnv = resolvedCredentialEnv();
+            if (options.enableHttps) {
+              const api = new TailscaleApiClient(
+                config,
+                process.env,
+                credentialEnv,
+              );
+              await api.enableHttps();
             }
-            if (options.funnel || m.funnel) {
-              await local.funnel([
-                "--bg",
-                `--tcp=${m.listenPort}`,
-                `tcp://127.0.0.1:${m.listenPort}`,
-              ]);
+            if (options.applyPolicy) {
+              const { tags: deploymentTags } = resolveTags(config);
+              await ensureDeployTags(config, deploymentTags, {
+                yes: Boolean(options.yes),
+                ...(credentialEnv ? { credentialEnvName: credentialEnv } : {}),
+              });
+              await ensureFunnelReadiness(config, deploymentTags, {
+                yes: Boolean(options.yes),
+                applyPolicy: true,
+                ...(credentialEnv ? { credentialEnvName: credentialEnv } : {}),
+              });
+
+              // Ensure the current node advertises the required tags.
+              // On Windows, `tailscale up --advertise-tags` requires --reset
+              // which logs the user out. Instead, check the API first: if
+              // the node already has the tags via API, skip the local
+              // `tailscale up` — the tailscale daemon will sync eventually.
+              const local = new TailscaleLocal(await findTailscale());
+              try {
+                const status = await local.status<{
+                  Self?: { Tags?: string[]; ID?: string };
+                }>();
+                const currentTags = status.Self?.Tags ?? [];
+                const missingTags = deploymentTags.filter(
+                  (t) => !currentTags.includes(t),
+                );
+                if (missingTags.length) {
+                  // Tags missing locally — verify via API before attempting
+                  // `tailscale up` which can be disruptive on Windows.
+                  const apiTagsOk = await (async () => {
+                    try {
+                      const api = new TailscaleApiClient(
+                        config,
+                        process.env,
+                        credentialEnv,
+                      );
+                      const nodeId = status.Self?.ID;
+                      if (!nodeId) return false;
+                      const device = await api.getDevice(nodeId);
+                      return missingTags.every((t) =>
+                        (device.tags ?? []).includes(t),
+                      );
+                    } catch {
+                      return false;
+                    }
+                  })();
+                  if (apiTagsOk) {
+                    // Tags exist via API — wait for local daemon to sync
+                    await new Promise((r) => setTimeout(r, 2000));
+                  }
+                  // If tags truly missing via API, skip — tailscale funnel
+                  // will produce a descriptive error telling the user what to do
+                }
+              } catch {
+                // best-effort: if tags check fails, tailscale funnel will
+                // produce a descriptive error anyway
+              }
+            }
+          }
+
+          const local = new TailscaleLocal(await findTailscale());
+          if (process.platform === "win32") {
+            const daemon = await inspectDaemon();
+            if (!daemon.running) {
+              throw new Error(
+                `TAILSCALED_NOT_RUNNING: Tailscale daemon (service) is not running.\n` +
+                  `  Start it with: net start Tailscale\n` +
+                  `  Or open Tailscale GUI app and sign in.\n` +
+                  `  Without the daemon, "tailscale serve/funnel" cannot work.`,
+              );
+            }
+          }
+          // Logged-out tailnet: serve/funnel cannot be configured, but the
+          // TCP relays and the MCP endpoint do not need Tailscale at all —
+          // degrade (skip serve/funnel) instead of killing the whole command.
+          let tailnetAuthUrl: string | undefined;
+          try {
+            const st = await local.status<{
+              BackendState?: string;
+              AuthURL?: string;
+            }>();
+            if (st.BackendState === "NeedsLogin") {
+              tailnetAuthUrl = st.AuthURL ?? "run `tailscale login`";
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (/logged out|log in at/i.test(msg)) {
+              tailnetAuthUrl = "run `tailscale login`";
+            }
+          }
+          if (tailnetAuthUrl) {
+            serveSkipWarning =
+              `TAILNET_LOGGED_OUT: node is logged out of the tailnet — skipped tailscale serve/funnel. ` +
+              `TCP relays and the MCP endpoint stay up (reachable locally and via direct IP). ` +
+              `Log back in at: ${tailnetAuthUrl}`;
+            if (!quietJson()) {
+              console.error(`[relay-mcp-postgres] ${serveSkipWarning}`);
+            }
+          }
+          if (!tailnetAuthUrl) {
+            for (const m of mappings) {
+              try {
+                if (options.serve || m.serve) {
+                  await local.serve([
+                    "--bg",
+                    "--yes",
+                    `--tcp=${m.listenPort}`,
+                    `tcp://127.0.0.1:${m.listenPort}`,
+                  ]);
+                }
+                if (options.funnel || m.funnel) {
+                  await local.funnel([
+                    "--bg",
+                    `--tcp=${m.listenPort}`,
+                    `tcp://127.0.0.1:${m.listenPort}`,
+                  ]);
+                }
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                if (
+                  process.platform === "win32" &&
+                  msg.includes("ProtectedPrefix\\Administrators")
+                ) {
+                  throw new Error(
+                    `TAILSCALE_SERVE_REQUIRES_ADMIN: configuring "tailscale serve/funnel" on Windows requires an elevated terminal (Run as Administrator).\n` +
+                      `  Option 1 (Recommended): remove "--serve" and "--funnel". When using "--mcp-bind 0.0.0.0" and "--host 0.0.0.0", all TCP relays and the MCP endpoint are ALREADY accessible directly over Tailscale (e.g. http://100.x.y.z:${mcpPort}/mcp and 100.x.y.z:${m.listenPort}) without needing tailscale serve.\n` +
+                      `  Option 2: open PowerShell / Command Prompt with "Run as Administrator" and re-run with --serve/--funnel.`,
+                  );
+                }
+                if (
+                  process.platform === "win32" &&
+                  msg.includes("cannot find the file specified")
+                ) {
+                  throw new Error(
+                    `TAILSCALED_NOT_RUNNING: "tailscale serve/funnel" failed because the Tailscale daemon (service) cannot be reached.\n` +
+                      `  1. Ensure Tailscale is installed and the service is running: net start Tailscale\n` +
+                      `  2. Sign in via the Tailscale GUI app\n` +
+                      `  3. Re-run this command\n` +
+                      `  Or remove "--serve"/"--funnel" — TCP relays on 0.0.0.0 are ALREADY accessible over Tailscale directly.`,
+                  );
+                }
+                if (
+                  msg.includes("allowed nodes") ||
+                  msg.includes("does not include the one you are using")
+                ) {
+                  throw new Error(
+                    `FUNNEL_NODE_NOT_ALLOWED: tailscale funnel rejected the request because this node is not in the policy's allowed list.\n` +
+                      `  Possible causes:\n` +
+                      `  1. The node does not have the required tag — ensure --apply-policy was used and check "tailscale status" for Tags\n` +
+                      `  2. The tagOwners/funnel nodeAttrs were not provisioned — re-run with --apply-policy --yes\n` +
+                      `  3. Manual fix: visit the URL shown in the error above, or run "tailscale set --advertise-tags=<tag>"`,
+                  );
+                }
+                throw err;
+              }
+            }
+
+            // Expose MCP HTTP endpoint over tailnet HTTPS when --serve/--funnel
+            // is used and MCP is bound to a non-loopback address.
+            if (wantsServe && mcpBind !== "127.0.0.1" && mcpBind !== "::1") {
+              try {
+                if (wantsFunnel) {
+                  await local.funnel([
+                    "--bg",
+                    "--yes",
+                    "--https=443",
+                    `http://127.0.0.1:${mcpPort}`,
+                  ]);
+                } else {
+                  await local.serve([
+                    "--bg",
+                    "--yes",
+                    "--https=443",
+                    `http://127.0.0.1:${mcpPort}`,
+                  ]);
+                }
+              } catch {
+                // best-effort: MCP endpoint remains accessible over plain
+                // HTTP on the tailnet IP even without HTTPS serve
+              }
             }
           }
         }
@@ -1867,10 +2096,38 @@ program
         const retryInterval = dbRetryInterval;
         let stopping = false;
 
+        // Collect profile names from mappings for --profile flag
+        const profileNames = resolvedMappings.map(
+          (m) => m.name ?? `relay-${m.listenPort}`,
+        );
+
+        // Re-register profiles before EVERY spawn: nexql-mcp rotates the
+        // global config.toml → config.toml.bak-<ts> and rewrites it on each
+        // start, which can drop profiles (observed: profiles vanish one by
+        // one until the file disappears). Registering once at startup left
+        // the supervisor in a permanent "profile not found" respawn loop.
+        const registerProfiles = (): Promise<void> =>
+          registerRelayProfiles({
+            runner,
+            mappings: resolvedMappings.map((m) => ({
+              listenPort: m.listenPort,
+              targetHost: m.targetHost,
+              targetPort: m.targetPort,
+              ...(m.user !== undefined ? { user: m.user } : {}),
+              ...(m.password !== undefined ? { password: m.password } : {}),
+              ...(m.database !== undefined ? { database: m.database } : {}),
+              ...(m.name !== undefined ? { name: m.name } : {}),
+              ...(m.accessMode !== undefined
+                ? { accessMode: m.accessMode }
+                : {}),
+            })),
+          });
+
         const trySpawn = async (): Promise<
           { pid: number; waitForExit: Promise<void> } | undefined
         > => {
           try {
+            await registerProfiles();
             const started = await startNexqlMcpHttp({
               runner,
               connectionString,
@@ -1879,6 +2136,7 @@ program
               token,
               logPath,
               readyTimeoutMs: mcpReadyTimeout,
+              profiles: profileNames,
             });
             nexqlPid = started.pid;
             retryCount = 0;
@@ -1976,6 +2234,7 @@ program
                   `PRIMARY_FALLBACK: ${mappings[0]!.targetHost}:${mappings[0]!.targetPort} unreachable; MCP primary is mapping[${primaryIndex}] (${primary.targetHost}:${primary.targetPort})`,
                 ]
               : []),
+            ...(serveSkipWarning ? [serveSkipWarning] : []),
           ],
           [
             `TCP relay listening on ${primary.listenHost ?? options.host ?? "0.0.0.0"}:${primary.listenPort} -> ${primary.targetHost}:${primary.targetPort}`,

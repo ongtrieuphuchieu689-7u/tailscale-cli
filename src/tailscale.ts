@@ -119,13 +119,24 @@ export class TailscaleLocal {
       process.env.TS_TAILSCALE_SOCKET?.trim() ??
       (await trackedUserspaceSocket());
     const commandArgs = socket ? [`--socket=${socket}`, ...args] : args;
-    const { stdout, stderr } = await execFileAsync(this.bin, commandArgs, {
-      timeout: options.timeoutMs ?? 60_000,
-      windowsHide: true,
-      env: { ...process.env, ...options.env },
-      maxBuffer: 8 * 1024 * 1024,
-    });
-    return { stdout, stderr, code: 0 };
+    try {
+      const { stdout, stderr } = await execFileAsync(this.bin, commandArgs, {
+        timeout: options.timeoutMs ?? 60_000,
+        windowsHide: true,
+        env: { ...process.env, ...options.env },
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      return { stdout, stderr, code: 0 };
+    } catch (err) {
+      // execFileAsync only includes stdout in the error message; tailscale
+      // writes diagnostics to stderr, so re-throw with both streams.
+      if (err instanceof Error && "stderr" in err) {
+        const e = err as Error & { stdout?: string; stderr?: string };
+        const detail = [e.stdout, e.stderr].filter(Boolean).join("\n").trim();
+        throw new Error(detail || e.message);
+      }
+      throw err;
+    }
   }
 
   async runJson<T>(
