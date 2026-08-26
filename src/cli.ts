@@ -26,6 +26,7 @@ import {
   tailscaleVersion,
   TailscaleLocal,
 } from "./tailscale.js";
+import { startOAuthWrapper } from "./oauth-wrapper.js";
 import {
   cacheBinDir,
   installWindowsMsi,
@@ -2244,9 +2245,33 @@ program
           start,
         );
 
+        // Integrated OAuth wrapper for Claude.ai web — no separate file needed (fix: write superuser + OAuth)
+        const oauthPort = Number(process.env.OAUTH_PORT ?? 3000);
+        const publicUrl = process.env.PUBLIC_URL ?? `https://${process.env.TS_HOSTNAME ?? "mcp-postgres"}.${process.env.TS_TAILNET && process.env.TS_TAILNET !== "-" ? process.env.TS_TAILNET : "tailadac87.ts.net"}`;
+        let oauthServer: { close: () => void } | undefined;
+        try {
+          const { startOAuthWrapper } = await import("./oauth-wrapper.js");
+          oauthServer = startOAuthWrapper({ mcpTarget: `http://127.0.0.1:${mcpPort}`, token, port: oauthPort, publicUrl });
+          if (!quietJson()) console.error(`[relay-mcp-postgres] oauth-wrapper listening on 0.0.0.0:${oauthPort} → http://127.0.0.1:${mcpPort} (public ${publicUrl})`);
+          if (wantsServe) {
+            try {
+              const local2 = new TailscaleLocal(await findTailscale());
+              if (wantsFunnel) {
+                await local2.funnel(["--bg", "--yes", "--https=443", `http://127.0.0.1:${oauthPort}`]);
+              } else {
+                await local2.serve(["--bg", "--yes", "--https=443", `http://127.0.0.1:${oauthPort}`]);
+              }
+              if (!quietJson()) console.error(`[relay-mcp-postgres] tailscale ${wantsFunnel ? "funnel" : "serve"} reconfigured to oauth-wrapper :${oauthPort}`);
+            } catch {}
+          }
+        } catch {}
+
         await new Promise<void>((resolve) => {
           const shutdown = (): void => {
             stopping = true;
+            try {
+              oauthServer?.close();
+            } catch {}
             void Promise.all([
               multiRelay?.close().catch(() => {}),
               (async () => {
