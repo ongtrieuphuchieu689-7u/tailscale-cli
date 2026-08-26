@@ -1,6 +1,10 @@
 {
   "name": "tailsacle-cli",
+<<<<<<< HEAD
   "version": "1.260826.11408",
+=======
+  "version": "1.260826.11422",
+>>>>>>> 1b78f0d (feat(oauth): enforce confidential client (id+secret) with PKCE S256 for Claude.ai/ChatGPT)
   "private": false,
   "type": "module",
   "engines": {
