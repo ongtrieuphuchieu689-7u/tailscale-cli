@@ -117,23 +117,6 @@ export function startOAuthWrapper(
     const state = url.searchParams.get("state");
     const codeChallenge = url.searchParams.get("code_challenge");
     const clientId = url.searchParams.get("client_id") || "claude-ai";
-    // Enforce token for ChatGPT/Claude to prevent unauthenticated access via funnel
-    const tokenFromQuery = url.searchParams.get("token");
-    const tokenFromHeader = req.headers.authorization?.replace(
-      /^Bearer\s+/i,
-      "",
-    );
-    if (tokenFromQuery !== token && tokenFromHeader !== token) {
-      json(
-        res,
-        {
-          error: "invalid_client",
-          error_description: "token required on /authorize",
-        },
-        401,
-      );
-      return;
-    }
     if (!redirectUri) {
       json(
         res,
