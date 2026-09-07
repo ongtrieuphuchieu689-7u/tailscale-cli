@@ -1,6 +1,7 @@
 import http from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, randomFillSync } from "node:crypto";
 import { URL } from "node:url";
+import { maskSecret } from "./core.js";
 
 export interface OAuthWrapperOptions {
   mcpTarget?: string;
@@ -23,6 +24,22 @@ function s256(verifier: string): string {
   return createHash("sha256").update(verifier).digest("base64url");
 }
 
+const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+function secureRandomToken(length: number): string {
+  const limit = Math.floor(256 / chars.length) * chars.length;
+  let out = "";
+  const bytes = new Uint8Array(length * 2);
+  randomFillSync(bytes);
+  let i = 0;
+  while (out.length < length) {
+    const b = bytes[i++]!;
+    if (b < limit) out += chars[b % chars.length];
+    if (i >= bytes.length) randomFillSync(bytes);
+  }
+  return out;
+}
+
 export function startOAuthWrapper(
   options: OAuthWrapperOptions = {},
 ): http.Server {
@@ -40,11 +57,15 @@ export function startOAuthWrapper(
   const clientSecret =
     options.clientSecret ?? process.env.OAUTH_CLIENT_SECRET ?? token;
   const port = options.port ?? Number(process.env.OAUTH_PORT ?? 3000);
-  const publicUrl = (
-    options.publicUrl ??
-    process.env.PUBLIC_URL ??
-    "https://mcp-postgres.tailadac87.ts.net"
-  ).replace(/\/$/, "");
+  const publicUrl = (options.publicUrl ?? process.env.PUBLIC_URL)?.replace(
+    /\/$/,
+    "",
+  );
+  if (!publicUrl) {
+    throw new Error(
+      "PUBLIC_URL must be set (e.g. https://mcp.tailnet-name.ts.net)",
+    );
+  }
   const redirectAllowlist = [
     /^https:\/\/claude\.ai\/api\/mcp\/auth_callback$/,
     /^https:\/\/chatgpt\.com\/connector\/oauth\/[^/]+$/,
@@ -194,9 +215,7 @@ export function startOAuthWrapper(
       );
       return;
     }
-    const code =
-      Math.random().toString(36).slice(2, 12) +
-      Math.random().toString(36).slice(2, 12);
+    const code = secureRandomToken(20);
     codes.set(code, {
       challenge: codeChallenge,
       clientId: clientIdParam,
@@ -258,9 +277,7 @@ export function startOAuthWrapper(
         }
         json(res, {
           access_token: token,
-          refresh_token:
-            Math.random().toString(36).slice(2) +
-            Math.random().toString(36).slice(2),
+          refresh_token: secureRandomToken(32),
           token_type: "Bearer",
           expires_in: 3600,
           scope: "mcp.read mcp.write offline_access",
@@ -271,9 +288,7 @@ export function startOAuthWrapper(
       if (grant === "client_credentials" || grant === "refresh_token") {
         json(res, {
           access_token: token,
-          refresh_token:
-            Math.random().toString(36).slice(2) +
-            Math.random().toString(36).slice(2),
+          refresh_token: secureRandomToken(32),
           token_type: "Bearer",
           expires_in: 3600,
           scope: "mcp.read mcp.write offline_access",
@@ -306,7 +321,7 @@ export function startOAuthWrapper(
   }
 
   const server = http.createServer((req, res) => {
-    console.log(
+    console.error(
       `[oauth-wrapper] ${req.method} ${req.url} Host:${req.headers.host}`,
     );
     if (req.method === "OPTIONS") {
@@ -351,7 +366,7 @@ export function startOAuthWrapper(
 
   server.listen(port, "0.0.0.0", () => {
     console.log(
-      `[oauth-wrapper] listening on 0.0.0.0:${port} → ${mcpTarget}, public ${publicUrl}, client ${clientId}, secret ${clientSecret.slice(0, 5)}...`,
+      `[oauth-wrapper] listening on 0.0.0.0:${port} → ${mcpTarget}, public ${publicUrl}, client ${clientId}, secret ${maskSecret(clientSecret)}`,
     );
   });
   return server;

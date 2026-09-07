@@ -56,7 +56,7 @@ export function generateSampleConfig(
     "maxRetries": 10
   },
 
-  // Log settings (chỉ áp dụng Windows — Linux dùng journald tự động)
+  // Log settings (Windows only — Linux uses journald automatically)
   "log": {
     "dir": "./logs",
     "maxSizeMb": 10,

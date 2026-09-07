@@ -2249,7 +2249,19 @@ program
         const oauthPort = Number(process.env.OAUTH_PORT ?? 3000);
         const publicUrl =
           process.env.PUBLIC_URL ??
-          `https://${process.env.TS_HOSTNAME ?? "mcp-postgres"}.${process.env.TS_TAILNET && process.env.TS_TAILNET !== "-" ? process.env.TS_TAILNET : "tailadac87.ts.net"}`;
+          (() => {
+            const tailnet =
+              process.env.TS_TAILNET && process.env.TS_TAILNET !== "-"
+                ? process.env.TS_TAILNET
+                : undefined;
+            if (!tailnet) {
+              throw new Error(
+                "PUBLIC_URL or TS_TAILNET must be set to construct the OAuth public URL",
+              );
+            }
+            const host = process.env.TS_HOSTNAME ?? "mcp";
+            return `https://${host}.${tailnet}`;
+          })();
         let oauthServer: { close: () => void } | undefined;
         try {
           const { startOAuthWrapper } = await import("./oauth-wrapper.js");
@@ -2291,9 +2303,19 @@ program
                 console.error(
                   `[relay-mcp-postgres] tailscale ${wantsFunnel ? "funnel" : "serve"} reconfigured to oauth-wrapper :${oauthPort}`,
                 );
-            } catch {}
+            } catch (err) {
+              if (!quietJson())
+                console.error(
+                  `[relay-mcp-postgres] warn: failed to reconfigure tailscale ${wantsFunnel ? "funnel" : "serve"} for oauth-wrapper: ${err instanceof Error ? err.message : err}`,
+                );
+            }
           }
-        } catch {}
+        } catch (err) {
+          if (!quietJson())
+            console.error(
+              `[relay-mcp-postgres] warn: oauth-wrapper setup failed, continuing without it: ${err instanceof Error ? err.message : err}`,
+            );
+        }
 
         await new Promise<void>((resolve) => {
           const shutdown = (): void => {
