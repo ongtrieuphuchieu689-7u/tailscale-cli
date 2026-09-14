@@ -3,7 +3,7 @@
 > **Trạng thái:** ✅ **Đã triển khai (Phase 1 + Phase 2 core)** — 2026-08-19, xem [service-install-verification.md](./service-install-verification.md)  
 > **Phiên bản kế hoạch:** 2026-08-19 (v1) → **2026-08-19 (v2, đã review)** → **2026-08-19 (v3, đã triển khai)**  
 > **Tác giả:** Thiết kế bởi Antigravity  
-> **Ghi chú review v3 (sau khi code):** hệ thống đã code theo đúng thiết kế v2: `src/service/*` (types/config/registry/linux/windows/windows-scheduler/index), CLI `service` 9 subcommands, JSONC config qua `parseHuJson`, registry `~/.tailsacle-cli/services.json`, systemd system/user unit (bỏ `User=` khi user scope — systemd error 216), WinSW XML + `node-windows` dynamic import (optionalDependency), Task Scheduler qua `schtasks` (`--scheduler`), check `loginctl enable-linger`, port detection từ `--listen/--map/--file` (qua `/proc/net/tcp`), poll status + port sau install, secret env mask `****`, rollback unit file khi enable fail. Unit tests B1–B5 + CI workflow `service-install-test.yml` (Linux user service + Windows SCM). macOS launchd để Phase 2 (chưa làm).
+> **Ghi chú review v3 (sau khi code):** hệ thống đã code theo đúng thiết kế v2: `src/service/*` (types/config/registry/linux/windows/windows-scheduler/macos/index), CLI `service` 9 subcommands, JSONC config qua `parseHuJson`, registry `~/.tailsacle-cli/services.json`, systemd system/user unit (bỏ `User=` khi user scope — systemd error 216), WinSW XML + `node-windows` dynamic import (optionalDependency), Task Scheduler qua `schtasks` (`--scheduler`), macOS launchd plist generation + launchctl, check `loginctl enable-linger`, port detection từ `--listen/--map/--file` (qua `/proc/net/tcp`), poll status + port sau install, secret env mask `****`, rollback unit file khi enable fail. Unit tests B1–B5 + CI workflow `service-install-test.yml` (Linux user service + Windows SCM).
 
 ---
 
@@ -179,7 +179,7 @@ src/
 │   ├── registry.ts     # Track installed services (~/.tailsacle-cli/services.json)
 │   ├── windows.ts      # node-windows / WinSW XML generation
 │   ├── linux.ts        # systemd unit file generation + systemctl
-│   └── macos.ts        # (Future) launchd plist generation + launchctl
+│   └── macos.ts        # launchd plist generation + launchctl
 ```
 
 ### Interface ServiceManager
@@ -243,9 +243,9 @@ export interface ServiceManager {
 ### Phase 2 — Polish & Workflows [Đang triển khai]
 
 - [x] `.github/workflows/service-install-test.yml` — CI test trên ubuntu-latest + windows-latest
-- [ ] `examples/service-config.sample.jsonc` — file cấu hình mẫu chi tiết cho nhiều kịch bản relay
+- [x] `examples/service-config.sample.jsonc` — file cấu hình mẫu chi tiết cho nhiều kịch bản relay
 - [ ] Cập nhật tài liệu chính thức: `README.md`, `docs/usage.md`, `examples/README.md`
-- [ ] macOS launchd support (`src/service/macos.ts`)
+- [x] macOS launchd support (`src/service/macos.ts`)
 
 ### Phase 3 — Advanced [Kế hoạch tiếp theo]
 
@@ -282,7 +282,7 @@ export interface ServiceManager {
 ## 10. Quyết định kỹ thuật đã chốt (Sau Implementation)
 
 1. **WinSW**: Sử dụng binary bundle trong `node-windows` kết hợp với custom XML generator (`renderWinSwXml`) để không phụ thuộc vào wrapper runtime của package.
-2. **macOS Support**: Để Phase 2.
+2. **macOS Support**: Đã triển khai trong `src/service/macos.ts` — render `.plist` với `KeepAlive`, `launchctl load/unload`.
 3. **Linux Service Scope**: Mặc định là System service (yêu cầu sudo), hỗ trợ `--user` cho rootless user service (kèm cảnh báo `loginctl enable-linger`).
 4. **Log Streaming Windows**: Dùng `watchFile` để tail file `.out.log` và `.err.log` sinh bởi WinSW.
 

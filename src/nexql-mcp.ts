@@ -176,7 +176,7 @@ function directSpawnArgs(command: string[]): {
     : { file: "npx", args: ["-y", ...command] };
 }
 
-function commandForPlatformLegacy(command: string[]): {
+function commandForPlatform(command: string[]): {
   file: string;
   args: string[];
   windowsVerbatimArguments?: boolean;
@@ -200,7 +200,7 @@ function sleep(ms: number): Promise<void> {
 async function tryVersion(command: string[]): Promise<string | undefined> {
   try {
     const { file, args, windowsVerbatimArguments } =
-      commandForPlatformLegacy(command);
+      commandForPlatform(command);
     const { stdout, stderr } = await execFileAsync(file, args, {
       timeout: 60_000,
       windowsHide: true,
