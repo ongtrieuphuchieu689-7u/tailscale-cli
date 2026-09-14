@@ -47,7 +47,9 @@ tailscale status
 
 ---
 
-## 4. Cấu hình File `docs/deploy/relay-mcp-postgres.json`
+## 4. Cấu hình File `examples/relay-mcp-postgres/multi-db.jsonc`
+
+File mẫu cho 4 database đã có sẵn trong repo — dùng trực tiếp, không cần tạo mới. Dưới đây là cấu trúc tương đương:
 
 ```jsonc
 [
@@ -126,7 +128,7 @@ TCP Relays:   5431 → localhost:5432 (Postgres local)
 $env:TS_CLIENT_SECRET="tskey-client-XXXXX"
 
 node dist/cli.js relay-mcp-postgres `
-  --file docs/deploy/relay-mcp-postgres.json `
+  --file examples/relay-mcp-postgres/multi-db.jsonc `
   --mcp-port 8787 `
   --mcp-bind 0.0.0.0 `
   --token "my-secure-token-12345678" `
@@ -148,7 +150,7 @@ node dist/cli.js relay-mcp-postgres `
 ```powershell
 npx tailsacle-cli service install `
   --name pg-relay `
-  --file docs/deploy/relay-mcp-postgres.json `
+  --file examples/relay-mcp-postgres/multi-db.jsonc `
   --scheduler `
   --yes
 ```
@@ -158,7 +160,7 @@ npx tailsacle-cli service install `
 ```powershell
 npx tailsacle-cli service install `
   --name pg-relay `
-  --file docs/deploy/relay-mcp-postgres.json `
+  --file examples/relay-mcp-postgres/multi-db.jsonc `
   --yes
 ```
 
@@ -258,7 +260,7 @@ tailscale daemon
 **Giải pháp:** Chạy lại với `--apply-policy`:
 ```powershell
 npx tailsacle-cli relay-mcp-postgres `
-  --file docs/deploy/relay-mcp-postgres.json `
+  --file examples/relay-mcp-postgres/multi-db.jsonc `
   --funnel --serve `
   --apply-policy `
   --enable-https `
