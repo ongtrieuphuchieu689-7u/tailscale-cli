@@ -1009,6 +1009,17 @@ program
       const exposed = (options.expose ?? [])
         .filter(Boolean)
         .map(parseFunnelExpose);
+      const verifySeconds = options.verifyTimeout
+        ? Number(options.verifyTimeout)
+        : 120;
+      if (
+        !Number.isFinite(verifySeconds) ||
+        verifySeconds < 1 ||
+        verifySeconds > 3600
+      )
+        throw new Error(
+          `VERIFY_TIMEOUT_INVALID: --verify-timeout expects a positive number of seconds (max 3600), got "${options.verifyTimeout}"`,
+        );
       if (options.yes && options.applyPolicy) {
         const readiness = await ensureFunnelReadiness(config, deploymentTags, {
           yes: true,
@@ -1034,17 +1045,6 @@ program
         }
       }
       let resolvedTarget = target;
-      const verifySeconds = options.verifyTimeout
-        ? Number(options.verifyTimeout)
-        : 120;
-      if (
-        !Number.isFinite(verifySeconds) ||
-        verifySeconds < 1 ||
-        verifySeconds > 3600
-      )
-        throw new Error(
-          `VERIFY_TIMEOUT_INVALID: --verify-timeout expects a positive number of seconds (max 3600), got "${options.verifyTimeout}"`,
-        );
       if (options.tcp) {
         const [publicPort, localPort] = options.tcp
           .replace(/\s/g, "")

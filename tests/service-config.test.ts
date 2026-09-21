@@ -112,9 +112,13 @@ describe("service config", () => {
     const masked = maskEnv({
       DATABASE_URL: "postgres://user:p@ssw0rd@db.example.com:5432/mydb",
       REDIS_URL: "redis://:hunter2@cache.internal:6379/0",
+      JDBC_URL: "jdbc:postgresql://user:dbtest@db.example.com:5432/mydb",
     });
     expect(
       isSecretValue("postgres://user:p@ssw0rd@db.example.com:5432/mydb"),
+    ).toBe(true);
+    expect(
+      isSecretValue("jdbc:postgresql://user:dbtest@db.example.com/mydb"),
     ).toBe(true);
     expect(masked.DATABASE_URL).toBe("****");
     expect(masked.REDIS_URL).toBe("****");
