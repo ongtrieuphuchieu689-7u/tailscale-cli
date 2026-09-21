@@ -94,15 +94,18 @@ export function parseExposure(value: string): Exposure {
   else throw new Error(`EXPOSE_INVALID_TARGET: ${value.trim()}`);
 
   const portMatch = target.match(/:(\d+)(?:\/|$)/);
+  const port =
+    publicPort !== undefined
+      ? publicPort
+      : portMatch
+        ? Number(portMatch[1])
+        : undefined;
+  const isTcp = /^tcp:\/\//.test(target);
   return {
     target,
     public: false,
     ...(path ? { path } : {}),
-    ...(publicPort !== undefined
-      ? { https: publicPort }
-      : portMatch
-        ? { https: Number(portMatch[1]) }
-        : {}),
+    ...(port !== undefined ? (isTcp ? { tcp: port } : { https: port }) : {}),
   };
 }
 
@@ -482,7 +485,9 @@ export async function deploy(
   const runExposure = async (exposure: Exposure): Promise<void> => {
     const cmdArgs = ["--bg"];
     if (exposure.path) cmdArgs.push(`--set-path=${exposure.path}`);
-    if (exposure.https) {
+    if (exposure.tcp) {
+      cmdArgs.push(`--tcp=${exposure.tcp}`);
+    } else if (exposure.https) {
       if (exposure.public && ![443, 8443, 10000].includes(exposure.https))
         throw new Error(
           "FUNNEL_PORT_UNSUPPORTED: Funnel allows 443, 8443, or 10000",
@@ -537,7 +542,7 @@ export async function deploy(
     try {
       const result = await runCleanup(config, {
         dryRun: false,
-        yes: true,
+        yes: options.yes,
         ...(options.credentialEnvName
           ? { credentialEnvName: options.credentialEnvName }
           : {}),
@@ -546,9 +551,12 @@ export async function deploy(
         candidates: result.candidates.map((d) => d.id),
         deleted: result.deleted,
       };
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       warnings.push(
-        "CLEANUP_SKIPPED: no device cleanup permission; deploy succeeded without pruning offline devices",
+        message.startsWith("CLEANUP_CONFIRMATION_REQUIRED")
+          ? "CLEANUP_SKIPPED: cleanup requires confirmation (pass --yes or confirm in a TTY); deploy succeeded without pruning offline devices"
+          : "CLEANUP_SKIPPED: no device cleanup permission; deploy succeeded without pruning offline devices",
       );
       return { candidates: [], deleted: [], skipped: true };
     }

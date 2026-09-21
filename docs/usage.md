@@ -34,12 +34,12 @@ auto-detecting.
 `deploy` resolves the runtime profile, uses an existing `TS_AUTH_KEY` or creates an auth key through the Tailscale API (auto-detecting an OAuth trust credential in any `tskey-client-…` env var, or the one named by `--credential-env`), runs `tailscale up`, verifies a Running backend, and can configure Serve/Funnel exposures.
 
 - `--dry-run` inspects the resolved deployment plan without joining the tailnet.
-- `--expose <target>` repeatable: a local port/URL (`3000`, `localhost:8080`, `http://…`), or a public-port mapping `PUBLIC=LOCAL` with an optional `#path` (`443=8443`, `443=3000#/api`, `8443=3001`) for Funnel — `PUBLIC` must be 443/8443/10000 when `--funnel` is set.
+- `--expose <target>` repeatable: a local port/URL (`3000`, `localhost:8080`, `http://…`, `tcp://127.0.0.1:5432` maps to Tailscale TCP Serve/Funnel via `--tcp`), or a public-port mapping `PUBLIC=LOCAL` with an optional `#path` (`443=8443`, `443=3000#/api`, `8443=3001`) for Funnel — `PUBLIC` must be 443/8443/10000 when `--funnel` is set.
 - `--apply-policy` allows HuJSON-preserving `tagOwners`/`nodeAttrs` provisioning (never with plain `--yes` alone).
 - `--enable-https` allows enabling tailnet-wide HTTPS for Funnel exposures (HTTPS is never enabled implicitly).
 - `--key-expiry <value>` overrides the auth-key lifetime for this run (`max`/`unlimited` map to the documented 90-day ceiling; seconds are passed through verbatim, clamped with a `KEY_EXPIRY_CLAMPED` warning when above the ceiling).
 - `--tag-owner <owner...>` sets the owner(s) for auto-provisioned `tagOwners`; mixed-owner policies without it fail with `POLICY_TAG_OWNER_REQUIRED` instead of guessing.
-- `--cleanup` prunes exact-match offline devices for the deployment at the end on **any** profile (without the flag, no cleanup runs anywhere; `TS_NO_CLEANUP=1` still disables it).
+- `--cleanup` prunes exact-match offline devices for the deployment at the end on **any** profile (without the flag, no cleanup runs anywhere; `TS_NO_CLEANUP=1` still disables it). Deletion still requires confirmation — `--yes` or an interactive TTY prompt; in non-TTY environments without `--yes` it fails with `CLEANUP_CONFIRMATION_REQUIRED`.
 - With `deploy --funnel`, the funnel node attribute is verified **before** the local `funnel` command runs: auto-provisioned when `--apply-policy` is present, otherwise the deploy fails fast with `FUNNEL_ATTR_REQUIRED`.
 - When `TS_TAGS` is unset and the profile is not `dev`, a deterministic tag is used: `TS_TAG_BASE`, else the CI repository path, else `tailsacle-cli`/hostname.
 - Missing Tailscale binaries are auto-downloaded (SHA256-verified) into the cache; `update-bin` downloads the latest stable build there and never overwrites package-managed binaries. On Windows the MSI is downloaded, checksummed and installed silently when running as Administrator (otherwise the exact `msiexec /i … /qn` command is returned).

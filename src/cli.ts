@@ -1009,6 +1009,17 @@ program
       const exposed = (options.expose ?? [])
         .filter(Boolean)
         .map(parseFunnelExpose);
+      const verifySeconds = options.verifyTimeout
+        ? Number(options.verifyTimeout)
+        : 120;
+      if (
+        !Number.isFinite(verifySeconds) ||
+        verifySeconds < 1 ||
+        verifySeconds > 3600
+      )
+        throw new Error(
+          `VERIFY_TIMEOUT_INVALID: --verify-timeout expects a positive number of seconds (max 3600), got "${options.verifyTimeout}"`,
+        );
       if (options.yes && options.applyPolicy) {
         const readiness = await ensureFunnelReadiness(config, deploymentTags, {
           yes: true,
@@ -1034,9 +1045,6 @@ program
         }
       }
       let resolvedTarget = target;
-      const verifySeconds = options.verifyTimeout
-        ? Number(options.verifyTimeout)
-        : 120;
       if (options.tcp) {
         const [publicPort, localPort] = options.tcp
           .replace(/\s/g, "")
@@ -1279,10 +1287,21 @@ program
       const start = performance.now();
       try {
         const local = new TailscaleLocal(await findTailscale());
+        const portValue = (value: string, flag: string): number => {
+          const port = Number(value);
+          if (!Number.isInteger(port) || port < 1 || port > 65535)
+            throw new Error(
+              `PORT_INVALID: --${flag} expects a port 1-65535, got "${value}"`,
+            );
+          return port;
+        };
         const args = ["--bg", "--yes"];
-        if (options.https) args.push(`--https=${Number(options.https)}`);
-        else if (options.http) args.push(`--http=${Number(options.http)}`);
-        else if (options.tcp) args.push(`--tcp=${Number(options.tcp)}`);
+        if (options.https)
+          args.push(`--https=${portValue(options.https, "https")}`);
+        else if (options.http)
+          args.push(`--http=${portValue(options.http, "http")}`);
+        else if (options.tcp)
+          args.push(`--tcp=${portValue(options.tcp, "tcp")}`);
         if (options.path)
           args.push(
             `--set-path=${options.path.startsWith("/") ? options.path : `/${options.path}`}`,
@@ -1463,95 +1482,102 @@ program
         const wantsServe = options.serve || mappings.some((m) => m.serve);
         const wantsFunnel = options.funnel || mappings.some((m) => m.funnel);
 
-        if (wantsServe || wantsFunnel) {
-          if (process.platform === "win32") {
-            const daemon = await inspectDaemon();
-            if (!daemon.running) {
-              throw new Error(
-                `TAILSCALED_NOT_RUNNING: Tailscale daemon (service) is not running.\n` +
-                  `  Start it with: net start Tailscale\n` +
-                  `  Or open Tailscale GUI app and sign in.\n` +
-                  `  Without the daemon, "tailscale serve/funnel" cannot work.`,
-              );
+        try {
+          if (wantsServe || wantsFunnel) {
+            if (process.platform === "win32") {
+              const daemon = await inspectDaemon();
+              if (!daemon.running) {
+                throw new Error(
+                  `TAILSCALED_NOT_RUNNING: Tailscale daemon (service) is not running.\n` +
+                    `  Start it with: net start Tailscale\n` +
+                    `  Or open Tailscale GUI app and sign in.\n` +
+                    `  Without the daemon, "tailscale serve/funnel" cannot work.`,
+                );
+              }
+            }
+            const local = new TailscaleLocal(await findTailscale());
+            for (const m of mappings) {
+              try {
+                if (options.serve || m.serve) {
+                  await local.serve([
+                    "--bg",
+                    "--yes",
+                    `--tcp=${m.listenPort}`,
+                    `tcp://127.0.0.1:${m.listenPort}`,
+                  ]);
+                  actions.push(
+                    `configured Tailscale Serve on TCP port ${m.listenPort}`,
+                  );
+                }
+                if (options.funnel || m.funnel) {
+                  await local.funnel([
+                    "--bg",
+                    `--tcp=${m.listenPort}`,
+                    `tcp://127.0.0.1:${m.listenPort}`,
+                  ]);
+                  actions.push(
+                    `configured Tailscale Funnel on TCP port ${m.listenPort}`,
+                  );
+                }
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                if (
+                  process.platform === "win32" &&
+                  msg.includes("ProtectedPrefix\\Administrators")
+                ) {
+                  throw new Error(
+                    `TAILSCALE_SERVE_REQUIRES_ADMIN: configuring "tailscale serve/funnel" on Windows requires an elevated terminal (Run as Administrator).\n` +
+                      `  Option 1 (Recommended): remove "--serve" and "--funnel". All TCP relays listening on 0.0.0.0 are ALREADY accessible directly over Tailscale (e.g. 100.x.y.z:${m.listenPort}) without needing tailscale serve.\n` +
+                      `  Option 2: open PowerShell / Command Prompt with "Run as Administrator" and re-run with --serve/--funnel.`,
+                  );
+                }
+                if (
+                  process.platform === "win32" &&
+                  msg.includes("cannot find the file specified")
+                ) {
+                  throw new Error(
+                    `TAILSCALED_NOT_RUNNING: "tailscale serve/funnel" failed because the Tailscale daemon (service) cannot be reached.\n` +
+                      `  1. Ensure Tailscale is installed and the service is running: net start Tailscale\n` +
+                      `  2. Sign in via the Tailscale GUI app\n` +
+                      `  3. Re-run this command\n` +
+                      `  Or remove "--serve"/"--funnel" — TCP relays on 0.0.0.0 are ALREADY accessible over Tailscale directly.`,
+                  );
+                }
+                throw err;
+              }
             }
           }
-          const local = new TailscaleLocal(await findTailscale());
-          for (const m of mappings) {
-            try {
-              if (options.serve || m.serve) {
-                await local.serve([
-                  "--bg",
-                  "--yes",
-                  `--tcp=${m.listenPort}`,
-                  `tcp://127.0.0.1:${m.listenPort}`,
-                ]);
-                actions.push(
-                  `configured Tailscale Serve on TCP port ${m.listenPort}`,
-                );
-              }
-              if (options.funnel || m.funnel) {
-                await local.funnel([
-                  "--bg",
-                  `--tcp=${m.listenPort}`,
-                  `tcp://127.0.0.1:${m.listenPort}`,
-                ]);
-                actions.push(
-                  `configured Tailscale Funnel on TCP port ${m.listenPort}`,
-                );
-              }
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              if (
-                process.platform === "win32" &&
-                msg.includes("ProtectedPrefix\\Administrators")
-              ) {
-                throw new Error(
-                  `TAILSCALE_SERVE_REQUIRES_ADMIN: configuring "tailscale serve/funnel" on Windows requires an elevated terminal (Run as Administrator).\n` +
-                    `  Option 1 (Recommended): remove "--serve" and "--funnel". All TCP relays listening on 0.0.0.0 are ALREADY accessible directly over Tailscale (e.g. 100.x.y.z:${m.listenPort}) without needing tailscale serve.\n` +
-                    `  Option 2: open PowerShell / Command Prompt with "Run as Administrator" and re-run with --serve/--funnel.`,
-                );
-              }
-              if (
-                process.platform === "win32" &&
-                msg.includes("cannot find the file specified")
-              ) {
-                throw new Error(
-                  `TAILSCALED_NOT_RUNNING: "tailscale serve/funnel" failed because the Tailscale daemon (service) cannot be reached.\n` +
-                    `  1. Ensure Tailscale is installed and the service is running: net start Tailscale\n` +
-                    `  2. Sign in via the Tailscale GUI app\n` +
-                    `  3. Re-run this command\n` +
-                    `  Or remove "--serve"/"--funnel" — TCP relays on 0.0.0.0 are ALREADY accessible over Tailscale directly.`,
-                );
-              }
-              throw err;
-            }
-          }
+
+          emit(
+            "relay",
+            {
+              status: "running",
+              count: mappings.length,
+              mappings,
+              tailscaleServe: Boolean(wantsServe),
+              tailscaleFunnel: Boolean(wantsFunnel),
+            },
+            [],
+            actions,
+            [],
+            start,
+          );
+
+          // Keep process alive for relay unless interrupted
+          await new Promise<void>((resolve) => {
+            process.on("SIGINT", () => {
+              void multiRelay.close().then(() => resolve());
+            });
+            process.on("SIGTERM", () => {
+              void multiRelay.close().then(() => resolve());
+            });
+          });
+        } catch (error) {
+          // Close the listening relays before failing so the process can
+          // actually exit (open servers otherwise keep the event loop alive).
+          await multiRelay.close().catch(() => {});
+          throw error;
         }
-
-        emit(
-          "relay",
-          {
-            status: "running",
-            count: mappings.length,
-            mappings,
-            tailscaleServe: Boolean(wantsServe),
-            tailscaleFunnel: Boolean(wantsFunnel),
-          },
-          [],
-          actions,
-          [],
-          start,
-        );
-
-        // Keep process alive for relay unless interrupted
-        await new Promise<void>((resolve) => {
-          process.on("SIGINT", () => {
-            void multiRelay.close().then(() => resolve());
-          });
-          process.on("SIGTERM", () => {
-            void multiRelay.close().then(() => resolve());
-          });
-        });
       } catch (error) {
         fail("relay", error, start);
       }

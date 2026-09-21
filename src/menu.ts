@@ -58,12 +58,11 @@ export async function interactiveMenu(): Promise<string[]> {
       } else if (target) {
         args.push("--apply-policy");
       }
-      args.push("--cleanup");
       const yes = await confirm({
         message: "Approve the lifecycle side effects (--yes)?",
         default: true,
       });
-      if (yes) args.push("--yes");
+      if (yes) args.push("--yes", "--cleanup");
       return args;
     }
     case "funnel": {
@@ -134,10 +133,6 @@ export async function interactiveMenu(): Promise<string[]> {
     case "doctor":
       return ["doctor", "--detect-credentials"];
     case "cleanup": {
-      await confirm({
-        message: "Dry-run the cleanup candidates first?",
-        default: true,
-      });
       const yes = await confirm({
         message: "Actually remove matching offline devices (--yes)?",
         default: false,
