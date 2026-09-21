@@ -11,7 +11,7 @@ import type {
 const NAME_RE = /^[a-zA-Z0-9-]+$/;
 
 const SECRET_VALUE_RE =
-  /tskey-|secret|token|password|passwd|api[_-]?key|credential/i;
+  /tskey-|secret|token|password|passwd|api[_-]?key|credential|^[a-z][a-z0-9+.-]*:\/\/(?::[^@/\s]+@|[^/\s:@]+:[^@/\s]+@)/i;
 
 const DEFAULT_RESTART: ServiceRestartPolicy = {
   onFailure: true,

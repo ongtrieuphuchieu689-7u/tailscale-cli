@@ -14,11 +14,11 @@ tailsacle-cli deploy [options]
 | :--- | :--- | :---: | :--- |
 | `--dry-run` | `boolean` | `false` | Chỉ lập kế hoạch triển khai và kiểm tra cấu hình, không thay đổi trạng thái node hay tailnet. |
 | `--yes` | `boolean` | `false` | Bỏ qua các bước xác nhận tương tác (bắt buộc trong môi trường CI/CD không có TTY). |
-| `--expose <target...>` | `string[]` | `[]` | Cổng/URL cần chia sẻ: `3000`, `http://127.0.0.1:8080`, hoặc ánh xạ cổng công khai `PUBLIC=LOCAL` (`443=3000`, `8443=3001`, `10000=5432`). |
+| `--expose <target...>` | `string[]` | `[]` | Cổng/URL cần chia sẻ: `3000`, `http://127.0.0.1:8080`, `tcp://127.0.0.1:5432` (Serve/Funnel TCP qua `--tcp`), hoặc ánh xạ cổng công khai `PUBLIC=LOCAL` (`443=3000`, `8443=3001`, `10000=5432`). |
 | `--funnel` | `boolean` | `false` | Xuất bản dịch vụ ra ngoài Internet công khai qua Tailscale Funnel. |
 | `--apply-policy` | `boolean` | `false` | Cho phép tự động cập nhật ACL Policy (thêm `tagOwners`, node attribute `funnel`) với định dạng HuJSON được bảo toàn. |
 | `--enable-https` | `boolean` | `false` | Cho phép tự động bật HTTPS trên toàn bộ tailnet nếu đang bị tắt (yêu cầu quyền `all` scope). |
-| `--cleanup` | `boolean` | `false` | Tự động quét và xoá các thiết bị offline khớp chính xác hostname/tags sau khi deploy thành công. |
+| `--cleanup` | `boolean` | `false` | Quét và xoá các thiết bị offline khớp chính xác hostname/tags sau khi deploy thành công. Việc xoá vẫn cần xác nhận (`--yes` hoặc TTY); không có TTY và không `--yes` sẽ báo `CLEANUP_CONFIRMATION_REQUIRED`. |
 | `--ssh` / `--no-ssh` | `boolean` | `--ssh` | Bật hoặc tắt Tailscale SSH trên node này. |
 | `--key-expiry <value>`| `string` | `max` | Thời hạn auth key (`max`/`unlimited` trần 90 ngày, hoặc số giây cụ thể). |
 | `--tag-owner <owner...>`| `string[]` | `undefined` | Chủ sở hữu (`autogroup:admin`, email, group) khi tự động cấp `tagOwners`. |

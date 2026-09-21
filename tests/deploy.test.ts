@@ -270,6 +270,28 @@ describe("exposure parsing", () => {
     );
   });
 
+  it("exposes tcp:// targets over TCP rather than HTTPS", () => {
+    expect(parseExposure("tcp://127.0.0.1:5432")).toEqual({
+      target: "tcp://127.0.0.1:5432",
+      public: false,
+      path: undefined,
+      tcp: 5432,
+    });
+    expect(parseExposure("9999=tcp://127.0.0.1:5432")).toEqual({
+      target: "tcp://127.0.0.1:5432",
+      public: false,
+      tcp: 9999,
+    });
+  });
+
+  it("still maps http targets to an https exposure", () => {
+    expect(parseExposure("http://127.0.0.1:8080")).toEqual({
+      target: "http://127.0.0.1:8080",
+      public: false,
+      https: 8080,
+    });
+  });
+
   it("marks funnel exposures as public", () => {
     expect(resolveExposures(["3000"], true)[0]?.public).toBe(true);
   });

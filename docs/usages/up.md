@@ -15,7 +15,7 @@ tailsacle-cli up [options]
 | `--dry-run` | `boolean` | `false` | Xem trước kế hoạch và thông số kết nối mà không thực sự join. |
 | `--yes` | `boolean` | `false` | Tự động đồng ý các bước xác thực mà không hỏi tương tác (TTY). |
 | `--apply-policy` | `boolean` | `false` | Cho phép tự động cấp `tagOwners` nếu tag chưa được định nghĩa trong ACL policy. |
-| `--cleanup` | `boolean` | `false` | Quét và dọn dẹp các thiết bị offline cùng tên/tag sau khi gia nhập thành công. |
+| `--cleanup` | `boolean` | `false` | Quét và dọn dẹp các thiết bị offline cùng tên/tag sau khi gia nhập thành công. Việc xoá cần xác nhận (`--yes` hoặc TTY); không có TTY và không `--yes` sẽ báo `CLEANUP_CONFIRMATION_REQUIRED`. |
 | `--ssh` / `--no-ssh` | `boolean` | `--ssh` | Bật hoặc tắt Tailscale SSH trên node. |
 | `--key-expiry <value>`| `string` | `max` | Thời hạn auth key (`max`/`unlimited` tối đa 90 ngày, hoặc số giây). |
 | `--tag-owner <owner...>`| `string[]` | `undefined` | Chỉ định chủ sở hữu khi tự động tạo `tagOwners`. |

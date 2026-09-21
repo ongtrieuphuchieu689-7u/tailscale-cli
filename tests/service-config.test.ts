@@ -7,6 +7,7 @@ import {
   validateServiceConfig,
   resolveUserName,
   maskEnv,
+  isSecretValue,
 } from "../src/service/config.js";
 
 const tmpDir = resolvePath("/tmp/ts-service-config-test");
@@ -105,6 +106,27 @@ describe("service config", () => {
     });
     expect(masked.NODE_ENV).toBe("production");
     expect(masked.TS_CLIENT_SECRET).toBe("****");
+  });
+
+  it("masks connection-string style env values with embedded credentials", () => {
+    const masked = maskEnv({
+      DATABASE_URL: "postgres://user:p@ssw0rd@db.example.com:5432/mydb",
+      REDIS_URL: "redis://:hunter2@cache.internal:6379/0",
+    });
+    expect(
+      isSecretValue("postgres://user:p@ssw0rd@db.example.com:5432/mydb"),
+    ).toBe(true);
+    expect(masked.DATABASE_URL).toBe("****");
+    expect(masked.REDIS_URL).toBe("****");
+  });
+
+  it("does not mask plain URLs without embedded credentials", () => {
+    const masked = maskEnv({
+      BASE_URL: "https://example.com/api",
+      INTERNAL_URL: "http://localhost:3000/health",
+    });
+    expect(masked.BASE_URL).toBe("https://example.com/api");
+    expect(masked.INTERNAL_URL).toBe("http://localhost:3000/health");
   });
 
   it("throws SERVICE_CONFIG_NOT_FOUND for a missing file", () => {

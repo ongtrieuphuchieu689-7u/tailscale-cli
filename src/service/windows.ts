@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  unwatchFile,
   watchFile,
   writeFileSync,
 } from "node:fs";
@@ -334,6 +335,11 @@ export class WindowsServiceManager implements ServiceManager {
     tail(errFile);
     if (opts.follow) {
       await new Promise<void>((resolve) => {
+        const stop = (): void => {
+          unwatchFile(outFile);
+          unwatchFile(errFile);
+          resolve();
+        };
         const watch = (filePath: string): void => {
           if (!existsSync(filePath)) return;
           watchFile(filePath, { interval: 1000 }, () => {
@@ -342,8 +348,8 @@ export class WindowsServiceManager implements ServiceManager {
         };
         watch(outFile);
         watch(errFile);
-        process.once("SIGINT", () => resolve());
-        process.once("SIGTERM", () => resolve());
+        process.once("SIGINT", stop);
+        process.once("SIGTERM", stop);
       });
     }
   }
