@@ -1307,6 +1307,7 @@ import {
   startMultiRelay,
   parseRelayMapping,
   loadRelayConfigFile,
+  resolveRelayListenHosts,
   type RelayMapping,
   type MultiRelayInstance,
 } from "./relay.js";
@@ -1316,6 +1317,7 @@ import {
   startNexqlMcpHttp,
   stopNexqlMcpHttp,
   registerRelayProfiles,
+  sanitizeProfileName,
   maskConnString,
   maskToken,
   randomToken,
@@ -1436,7 +1438,16 @@ program
 
         const actions: string[] = [];
 
-        const multiRelay = await startMultiRelay(mappings, {
+        // Mappings from --map/--file carry no listenHost, so an explicit
+        // --host would otherwise be silently dropped and startMultiRelay would
+        // fall back to its loopback default. Resolve once so the relay binds
+        // where we report it binds.
+        const resolvedMappings: RelayMapping[] = resolveRelayListenHosts(
+          mappings,
+          options.host,
+        );
+
+        const multiRelay = await startMultiRelay(resolvedMappings, {
           onConnection: (mapping, addr) => {
             if (!program.opts<{ json?: boolean }>().json) {
               console.error(
@@ -1453,15 +1464,17 @@ program
           },
         });
 
-        for (const m of mappings) {
+        for (const m of resolvedMappings) {
           actions.push(
-            `TCP relay listening on ${m.listenHost ?? options.host ?? "0.0.0.0"}:${m.listenPort} -> ${m.targetHost}:${m.targetPort}`,
+            `TCP relay listening on ${m.listenHost}:${m.listenPort} -> ${m.targetHost}:${m.targetPort}`,
           );
         }
 
         // Tailscale Serve / Funnel integration
-        const wantsServe = options.serve || mappings.some((m) => m.serve);
-        const wantsFunnel = options.funnel || mappings.some((m) => m.funnel);
+        const wantsServe =
+          options.serve || resolvedMappings.some((m) => m.serve);
+        const wantsFunnel =
+          options.funnel || resolvedMappings.some((m) => m.funnel);
 
         if (wantsServe || wantsFunnel) {
           if (process.platform === "win32") {
@@ -1476,7 +1489,7 @@ program
             }
           }
           const local = new TailscaleLocal(await findTailscale());
-          for (const m of mappings) {
+          for (const m of resolvedMappings) {
             try {
               if (options.serve || m.serve) {
                 await local.serve([
@@ -1532,8 +1545,8 @@ program
           "relay",
           {
             status: "running",
-            count: mappings.length,
-            mappings,
+            count: resolvedMappings.length,
+            mappings: resolvedMappings,
             tailscaleServe: Boolean(wantsServe),
             tailscaleFunnel: Boolean(wantsFunnel),
           },
@@ -1830,10 +1843,10 @@ program
           ? Number(options.connectTimeout)
           : 5_000;
 
-        const resolvedMappings = mappings.map((m) => ({
-          ...m,
-          listenHost: m.listenHost ?? options.host ?? "0.0.0.0",
-        }));
+        const resolvedMappings = resolveRelayListenHosts(
+          mappings,
+          options.host,
+        );
 
         multiRelay = await startMultiRelay(
           resolvedMappings,
@@ -2097,9 +2110,11 @@ program
         const retryInterval = dbRetryInterval;
         let stopping = false;
 
-        // Collect profile names from mappings for --profile flag
-        const profileNames = resolvedMappings.map(
-          (m) => m.name ?? `relay-${m.listenPort}`,
+        // Collect profile names from mappings for --profile flag. These must be
+        // the sanitized names registerRelayProfiles() writes into config.toml,
+        // otherwise nexql-mcp is told to load a profile that does not exist.
+        const profileNames = resolvedMappings.map((m) =>
+          sanitizeProfileName(m.name ?? `relay-${m.listenPort}`),
         );
 
         // Re-register profiles before EVERY spawn: nexql-mcp rotates the

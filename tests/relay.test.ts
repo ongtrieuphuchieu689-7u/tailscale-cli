@@ -6,6 +6,7 @@ import {
   startMultiRelay,
   parseRelayMapping,
   loadRelayConfigFile,
+  resolveRelayListenHosts,
   type RelayInstance,
   type MultiRelayInstance,
 } from "../src/relay.js";
@@ -321,5 +322,93 @@ describe("TCP Relay", () => {
       });
     });
     expect(data).toBe("HEALTHY");
+  });
+
+  // Regression: server.close() defers its callback until every open connection
+  // ends, so close() used to hang forever while a client session was live —
+  // wedging SIGINT handling and the roll-back of already-started relays.
+  it("should close promptly even while a proxied connection is still open", async () => {
+    echoServer1 = net.createServer((sock) => {
+      sock.on("data", () => {});
+    });
+    await new Promise<void>((res) =>
+      echoServer1!.listen(0, "127.0.0.1", () => res()),
+    );
+    const targetPort = (echoServer1.address() as net.AddressInfo).port;
+
+    relay = await startRelay({
+      listenPort: 0,
+      targetHost: "127.0.0.1",
+      targetPort,
+    });
+    const relayPort = (relay.server.address() as net.AddressInfo).port;
+
+    // Hold a connection open for the whole assertion — the client is NOT ended
+    // first, which is exactly the situation that used to hang close().
+    const client = net.connect({ host: "127.0.0.1", port: relayPort });
+    await new Promise<void>((res) => client.on("connect", () => res()));
+    await new Promise((r) => setTimeout(r, 100));
+
+    try {
+      const closed = relay.close().then(
+        () => "closed",
+        () => "errored",
+      );
+      expect(
+        await Promise.race([
+          closed,
+          new Promise<string>((res) => setTimeout(() => res("hung"), 3_000)),
+        ]),
+      ).toBe("closed");
+    } finally {
+      client.destroy();
+      relay = undefined;
+    }
+  });
+
+  // Regression: the `relay` command passed raw --map/--file mappings straight to
+  // startMultiRelay, which defaults to loopback. An explicit --host was dropped
+  // and the CLI still printed "listening on 0.0.0.0".
+  it("resolves --host into mappings that carry no listenHost", () => {
+    const fromMap = [parseRelayMapping("5432:5433")];
+
+    // Explicit --host wins over the 0.0.0.0 default.
+    expect(resolveRelayListenHosts(fromMap, "127.0.0.1")).toEqual([
+      { ...fromMap[0], listenHost: "127.0.0.1" },
+    ]);
+    // No --host still defaults to 0.0.0.0 (as documented in --help).
+    expect(resolveRelayListenHosts(fromMap, undefined)[0]!.listenHost).toBe(
+      "0.0.0.0",
+    );
+    // A mapping's own listenHost (config file / 4-token map) is preserved.
+    const explicit = [parseRelayMapping("192.168.1.5:5432:db:5433")];
+    expect(resolveRelayListenHosts(explicit, "10.0.0.9")[0]!.listenHost).toBe(
+      "192.168.1.5",
+    );
+    // Input is not mutated.
+    expect(fromMap[0]!.listenHost).toBeUndefined();
+  });
+
+  // SIGINT and SIGTERM handlers both call close(); a second call must not
+  // reject with ERR_SERVER_NOT_RUNNING (cli.ts chains .then() without a
+  // catch, so a rejection became an unhandled rejection).
+  it("should tolerate close() being called more than once", async () => {
+    echoServer1 = net.createServer((sock) => {
+      sock.on("data", () => {});
+    });
+    await new Promise<void>((res) =>
+      echoServer1!.listen(0, "127.0.0.1", () => res()),
+    );
+    const targetPort = (echoServer1.address() as net.AddressInfo).port;
+
+    relay = await startRelay({
+      listenPort: 0,
+      targetHost: "127.0.0.1",
+      targetPort,
+    });
+
+    await expect(relay.close()).resolves.toBeUndefined();
+    await expect(relay.close()).resolves.toBeUndefined();
+    relay = undefined;
   });
 });

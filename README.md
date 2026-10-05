@@ -50,7 +50,7 @@ public URL.
 ```bash
 export TS_AUTH_KEY='tskey-auth-...'        # or OAuth trust credential / TS_API_KEY
 npx tailscale-cli-opencode --yes --apply-policy --enable-https --json
-# -> OPencode URL: https://<hostname>.<tailnet>.ts.net/
+# -> OpenCode URL: https://<hostname>.<tailnet>.ts.net/
 ```
 
 - If `opencode` is not on `PATH`, it is resolved through `npx -y opencode-ai`

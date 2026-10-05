@@ -191,7 +191,10 @@ program.action(
         );
         return;
       } catch (error) {
-        fail("opencode", error, start);
+        // fail() only records the error envelope + exit code, so returning
+        // here is required: falling through would install/serve/funnel on a
+        // command the user asked to stop.
+        return fail("opencode", error, start);
       }
     }
     try {
@@ -210,8 +213,14 @@ program.action(
         if (value !== undefined && process.env[key] === undefined)
           process.env[key] = value;
       }
+      // --state-dir only reaches tailscaled via config.stateDir (deploy →
+      // startUserspaceDaemon); resolveConfig() alone reads TS_STATE_DIR, so the
+      // flag has to be applied here or it is silently ignored.
+      const config = resolveConfig(tailscaleEnv());
+      if (typeof options.stateDir === "string")
+        config.stateDir = options.stateDir;
       const result = await runOpenCodeFlow({
-        config: resolveConfig(tailscaleEnv()),
+        config,
         port,
         yes: Boolean(options.yes),
         dryRun: Boolean(options.dryRun),
@@ -262,7 +271,7 @@ program.action(
         start,
       );
       const urlsOut = result.urls.length
-        ? result.urls.map((url) => `OPencode URL: ${url}`).join("\n")
+        ? result.urls.map((url) => `OpenCode URL: ${url}`).join("\n")
         : undefined;
       // --json must keep stdout pure JSON; human-readable URLs go to stderr.
       if (program.opts<{ json?: boolean }>().json) {

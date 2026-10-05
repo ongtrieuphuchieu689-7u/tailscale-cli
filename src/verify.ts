@@ -58,13 +58,18 @@ export async function verifyEndpointReachable(
         if (kind === "tls") {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 10_000);
-          const response = await fetch(`https://${hostname}:${port}/`, {
-            method: "HEAD",
-            redirect: "manual",
-            signal: controller.signal,
-          });
-          clearTimeout(timer);
-          void response;
+          try {
+            const response = await fetch(`https://${hostname}:${port}/`, {
+              method: "HEAD",
+              redirect: "manual",
+              signal: controller.signal,
+            });
+            void response;
+          } finally {
+            // Must also be cleared when fetch rejects, otherwise the pending
+            // 10s timer keeps the event loop (and the process) alive.
+            clearTimeout(timer);
+          }
         } else {
           await tcpConnect(hostname, port, 10_000);
         }

@@ -356,6 +356,25 @@ export function loadRelayConfigFile(filePath: string): RelayMapping[] {
 }
 
 /**
+ * Fill in each mapping's listenHost from the CLI's --host flag, defaulting to
+ * "0.0.0.0".
+ *
+ * startRelay() itself defaults to loopback for safety, so callers MUST resolve
+ * the bind address before handing mappings over — otherwise `--host` is
+ * silently ignored and --map/--file relays end up unreachable from the LAN
+ * while the CLI reports "listening on 0.0.0.0".
+ */
+export function resolveRelayListenHosts(
+  mappings: RelayMapping[],
+  host?: string | undefined,
+): RelayMapping[] {
+  return mappings.map((m) => ({
+    ...m,
+    listenHost: m.listenHost ?? host ?? "0.0.0.0",
+  }));
+}
+
+/**
  * Start a single TCP relay.
  *
  * Fixes applied:
@@ -377,7 +396,17 @@ export function startRelay(options: RelayOptions): Promise<RelayInstance> {
       onError,
     } = options;
 
+    // Track live proxied sockets: net.Server.close() only stops accepting and
+    // its callback is deferred until every existing connection ends, so a
+    // relay with an open Postgres/HTTP session could never be shut down.
+    const openSockets = new Set<net.Socket>();
+
     const server = net.createServer((clientSocket) => {
+      openSockets.add(clientSocket);
+      clientSocket.once("close", () => {
+        openSockets.delete(clientSocket);
+      });
+
       const clientAddr = `${clientSocket.remoteAddress ?? "unknown"}:${clientSocket.remotePort ?? 0}`;
       if (onConnection) {
         onConnection(clientAddr);
@@ -440,6 +469,11 @@ export function startRelay(options: RelayOptions): Promise<RelayInstance> {
       clientSocket.on("error", handleErr);
       targetSocket.on("error", handleErr);
 
+      openSockets.add(targetSocket);
+      targetSocket.once("close", () => {
+        openSockets.delete(targetSocket);
+      });
+
       clientSocket.on("close", () => {
         targetSocket.destroy();
       });
@@ -448,16 +482,32 @@ export function startRelay(options: RelayOptions): Promise<RelayInstance> {
       });
     });
 
+    // A listen failure must reject the startup promise...
     server.once("error", (err) => {
       reject(err);
     });
+    // ...but errors raised after the server is listening (EMFILE on accept,
+    // EMFILE on the reverse connection, …) must not become an unhandled
+    // 'error' event that kills the process. Surface them like every other
+    // relay error instead of swallowing them.
+    let listening = false;
+    server.on("error", (err: Error) => {
+      if (listening && onError) onError(err);
+    });
 
     server.listen(listenPort, listenHost, () => {
+      listening = true;
       resolve({
         server,
         close: () =>
-          new Promise<void>((res, rej) => {
-            server.close((err) => (err ? rej(err) : res()));
+          new Promise<void>((res) => {
+            // Drop in-flight connections first, otherwise the close callback
+            // below never fires and callers awaiting close() hang forever.
+            for (const socket of openSockets) socket.destroy();
+            openSockets.clear();
+            // Ignore the callback error: close() is reachable only after a
+            // successful listen, and callers may invoke it more than once.
+            server.close(() => res());
           }),
         connectionsCount: () =>
           new Promise<number>((res, rej) => {

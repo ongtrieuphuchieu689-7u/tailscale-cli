@@ -3,12 +3,12 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
-  watchFile,
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { registryAdd, registryRemove, registryList } from "./registry.js";
 import { cliEntrypoint, nodeExecutable } from "./linux.js";
+import { followLogFiles } from "./follow.js";
 import type {
   InstallOptions,
   LogOptions,
@@ -205,17 +205,8 @@ export class WindowsSchedulerManager implements ServiceManager {
     tail(errFile, "stderr");
 
     if (opts.follow) {
-      await new Promise<void>((resolve) => {
-        const watch = (filePath: string, label: string): void => {
-          if (!existsSync(filePath)) return;
-          watchFile(filePath, { interval: 1000 }, () => {
-            tail(filePath, label);
-          });
-        };
-        watch(outFile, "stdout");
-        watch(errFile, "stderr");
-        process.once("SIGINT", () => resolve());
-        process.once("SIGTERM", () => resolve());
+      await followLogFiles([outFile, errFile], (filePath) => {
+        tail(filePath, filePath === outFile ? "stdout" : "stderr");
       });
     }
   }
