@@ -62,10 +62,10 @@ tailsacle-cli relay --file ./relays.jsonc
   "command": "relay",
   "resolved": {
     "status": "running",
-    "relayCount": 2,
+    "count": 2,
     "mappings": [
-      { "listenPort": 5432, "targetHost": "100.85.22.51", "targetPort": 5432 },
-      { "listenPort": 3306, "targetHost": "192.168.1.100", "targetPort": 3306 }
+      { "listenPort": 5432, "targetHost": "100.85.22.51", "targetPort": 5432, "listenHost": "0.0.0.0" },
+      { "listenPort": 3306, "targetHost": "192.168.1.100", "targetPort": 3306, "listenHost": "0.0.0.0" }
     ]
   },
   "warnings": [],

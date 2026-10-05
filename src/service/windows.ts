@@ -5,7 +5,6 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
-  watchFile,
   writeFileSync,
 } from "node:fs";
 import { join as joinPath } from "node:path";
@@ -13,6 +12,7 @@ import { createRequire } from "node:module";
 import { cliEntrypoint, nodeExecutable } from "./linux.js";
 import { registryAdd, registryRemove, registryList } from "./registry.js";
 import { maskEnv } from "./config.js";
+import { followLogFiles } from "./follow.js";
 import type {
   InstallOptions,
   LogOptions,
@@ -333,17 +333,8 @@ export class WindowsServiceManager implements ServiceManager {
     tail(outFile);
     tail(errFile);
     if (opts.follow) {
-      await new Promise<void>((resolve) => {
-        const watch = (filePath: string): void => {
-          if (!existsSync(filePath)) return;
-          watchFile(filePath, { interval: 1000 }, () => {
-            tail(filePath);
-          });
-        };
-        watch(outFile);
-        watch(errFile);
-        process.once("SIGINT", () => resolve());
-        process.once("SIGTERM", () => resolve());
+      await followLogFiles([outFile, errFile], (filePath) => {
+        tail(filePath);
       });
     }
   }

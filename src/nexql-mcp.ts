@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { randomFillSync } from "node:crypto";
 import {
+  chmodSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -774,6 +775,17 @@ export function maskToken(value: string): string {
 }
 
 /**
+ * Profile names reach us from user-supplied config files and are used both as
+ * a TOML table key (`[profiles.<name>]`) and as a filename
+ * (`<cacheDir>/profile-pw/<name>.pw`). Restrict them to a safe character set
+ * so a crafted name cannot escape the cache dir or inject extra TOML keys.
+ */
+export function sanitizeProfileName(name: string): string {
+  const cleaned = name.replace(/[^A-Za-z0-9._-]/g, "_").replace(/^\.+/, "");
+  return cleaned.length > 0 ? cleaned.slice(0, 64) : "relay-profile";
+}
+
+/**
  * Register relay configs as nexql-mcp profiles so the MCP server knows about
  * all databases. Each relay becomes a named profile that agents can switch
  * to via the `switch_connection` tool.
@@ -804,7 +816,14 @@ export async function registerRelayProfiles(options: {
   mkdirSync(configDir, { recursive: true });
 
   const pwDir = joinPath(cacheBinDir(), "profile-pw");
-  mkdirSync(pwDir, { recursive: true });
+  // The .pw files hold raw DB passwords: owner-only, never world/group
+  // readable. mkdirSync mode is masked by umask, so chmod explicitly.
+  mkdirSync(pwDir, { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(pwDir, 0o700);
+  } catch {
+    // best effort (e.g. non-POSIX filesystem)
+  }
 
   const defaultName =
     defaultProfile ?? mappings[0]?.name ?? `relay-${mappings[0]?.listenPort}`;
@@ -812,14 +831,19 @@ export async function registerRelayProfiles(options: {
   const lines: string[] = [`default_profile = "${defaultName}"`, ""];
 
   for (const m of mappings) {
-    const profileName = m.name ?? `relay-${m.listenPort}`;
+    const profileName = sanitizeProfileName(m.name ?? `relay-${m.listenPort}`);
     const user = m.user ?? "postgres";
     const database = m.database ?? "postgres";
     const password = m.password ?? "";
     const accessMode = m.accessMode ?? "read";
 
     const pwFile = joinPath(pwDir, `${profileName}.pw`);
-    writeFileSync(pwFile, password, "utf8");
+    writeFileSync(pwFile, password, { encoding: "utf8", mode: 0o600 });
+    try {
+      chmodSync(pwFile, 0o600);
+    } catch {
+      // best effort (e.g. re-writing an existing file keeps its old mode)
+    }
 
     lines.push(`[profiles.${profileName}]`);
     lines.push(`host = "127.0.0.1"`);

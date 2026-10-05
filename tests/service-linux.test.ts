@@ -157,6 +157,37 @@ describe.skipIf(process.platform !== "linux")("linux service manager", () => {
     expect(detectRelayPorts(["relay", "--listen", "notaport"])).toEqual([]);
   });
 
+  // Regression: the old split(":") heuristic could not tell "5432:5433" from
+  // "0.0.0.0:5432:host:5433" (Number("127.0.0.1") is NaN) and mangled
+  // bracketed IPv6, so host-qualified maps yielded NO ports. That silently
+  // disabled the post-install listening check in cli.ts.
+  it("detects relay ports from host-qualified and IPv6 --map args", () => {
+    expect(detectRelayPorts(["relay", "--map", "5432:10.0.0.1:5433"])).toEqual([
+      5432,
+    ]);
+    expect(
+      detectRelayPorts(["relay", "--map", "0.0.0.0:5432:host:5433"]),
+    ).toEqual([5432]);
+    expect(
+      detectRelayPorts(["relay", "--map", "127.0.0.1:5432:10.0.0.1:5435"]),
+    ).toEqual([5432]);
+    expect(
+      detectRelayPorts(["relay", "--map", "[::1]:5432:[fd7a::1]:5433"]),
+    ).toEqual([5432]);
+    // Mixed + deduplicated across both --listen and --map forms.
+    expect(
+      detectRelayPorts([
+        "relay",
+        "--listen",
+        "5432",
+        "--map",
+        "0.0.0.0:5432:host:5433,6443:10.0.0.1:6443",
+      ]),
+    ).toEqual([5432, 6443]);
+    // Genuinely unparsable entries are skipped, not fatal.
+    expect(detectRelayPorts(["relay", "--map", "garbage"])).toEqual([]);
+  });
+
   it("throws SERVICE_ALREADY_EXISTS when the unit file exists", async () => {
     mkdirSync(`${fakeHome}/.config/systemd/user`, { recursive: true });
     writeFileSync(`${fakeHome}/.config/systemd/user/my-relay.service`, "x");

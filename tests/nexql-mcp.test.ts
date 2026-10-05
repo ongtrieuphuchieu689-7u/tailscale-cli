@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import {
   maskConnString,
   connStringWithoutPassword,
@@ -11,6 +11,8 @@ import {
   randomToken,
   preflightTcpCheck,
   startNexqlMcpHttp,
+  registerRelayProfiles,
+  sanitizeProfileName,
   type NexqlMcpRunner,
 } from "../src/nexql-mcp.js";
 
@@ -138,4 +140,73 @@ describe("nexql-mcp helpers", () => {
       void server;
     }
   }, 20_000);
+
+  // Regression: the .pw files hold raw DB passwords and were created with the
+  // default 0644 mode inside a 0755 dir, i.e. readable by every local user.
+  it("stores relay profile passwords owner-readable only", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tscli-pwmode-"));
+    const prevBin = process.env.TS_BIN_DIR;
+    const prevHome = process.env.HOME;
+    const prevUserProfile = process.env.USERPROFILE;
+    try {
+      process.env.TS_BIN_DIR = dir;
+      process.env.HOME = dir;
+      process.env.USERPROFILE = dir;
+
+      await registerRelayProfiles({
+        runner: { kind: "path", command: ["nexql-mcp"], installedBy: "found" },
+        mappings: [
+          {
+            listenPort: 15432,
+            targetHost: "127.0.0.1",
+            targetPort: 5432,
+            user: "postgres",
+            database: "postgres",
+            password: "sup3r-s3cret",
+            name: "relay-primary",
+          },
+        ],
+      });
+
+      const pwDir = join(dir, "profile-pw");
+      const pwFile = join(pwDir, "relay-primary.pw");
+
+      expect(statSync(pwDir).mode & 0o777).toBe(0o700);
+      expect(statSync(pwFile).mode & 0o777).toBe(0o600);
+
+      // Sanity: the password is still written verbatim (read by nexql-mcp).
+      expect(readFileSync(pwFile, "utf8")).toBe("sup3r-s3cret");
+
+      const toml = readFileSync(
+        join(dir, ".config", "nexql-mcp", "config.toml"),
+        "utf8",
+      );
+      expect(toml).toContain("[profiles.relay-primary]");
+      expect(toml).toContain(`password_file = '${pwFile}'`);
+      // The secret itself must only ever live in the .pw file.
+      expect(toml).not.toContain("sup3r-s3cret");
+    } finally {
+      if (prevBin === undefined) delete process.env.TS_BIN_DIR;
+      else process.env.TS_BIN_DIR = prevBin;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = prevUserProfile;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps relay profile names safe for filesystem paths and TOML keys", () => {
+    // Path traversal out of the password cache dir.
+    expect(sanitizeProfileName("../../etc/shadow")).not.toContain("/");
+    expect(sanitizeProfileName("..")).not.toBe("..");
+    // TOML injection via the [profiles.<name>] table key.
+    expect(sanitizeProfileName('x"]\nsecret = "1')).not.toContain('"');
+    expect(sanitizeProfileName("x]\ndir = [")).not.toContain("]");
+    expect(sanitizeProfileName("")).toBe("relay-profile");
+    expect(sanitizeProfileName("...")).toBe("relay-profile");
+    // Ordinary names survive untouched.
+    expect(sanitizeProfileName("relay-primary")).toBe("relay-primary");
+    expect(sanitizeProfileName("relay_2.local-3")).toBe("relay_2.local-3");
+  });
 });

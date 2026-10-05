@@ -191,7 +191,10 @@ program.action(
         );
         return;
       } catch (error) {
-        fail("opencode", error, start);
+        // fail() only records the error envelope + exit code, so returning
+        // here is required: falling through would install/serve/funnel on a
+        // command the user asked to stop.
+        return fail("opencode", error, start);
       }
     }
     try {

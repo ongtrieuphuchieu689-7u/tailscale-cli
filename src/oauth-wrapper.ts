@@ -1,5 +1,5 @@
 import http from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { URL } from "node:url";
 
 export interface OAuthWrapperOptions {
@@ -194,9 +194,10 @@ export function startOAuthWrapper(
       );
       return;
     }
-    const code =
-      Math.random().toString(36).slice(2, 12) +
-      Math.random().toString(36).slice(2, 12);
+    // Authorization codes are single-use bearer credentials: they must be
+    // CSPRNG-generated. Math.random() is a non-cryptographic PRNG whose state
+    // is recoverable from a handful of outputs, making codes predictable.
+    const code = randomBytes(32).toString("base64url");
     codes.set(code, {
       challenge: codeChallenge,
       clientId: clientIdParam,

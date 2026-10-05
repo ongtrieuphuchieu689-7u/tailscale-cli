@@ -10,7 +10,7 @@ import { dirname, join as joinPath } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import { resolveUserName, maskEnv, isSecretValue } from "./config.js";
-import { loadRelayConfigFile } from "../relay.js";
+import { loadRelayConfigFile, parseRelayMapping } from "../relay.js";
 import { registryAdd, registryRemove, registryList } from "./registry.js";
 import type {
   InstallOptions,
@@ -306,22 +306,18 @@ export function detectRelayPorts(args: string[]): number[] {
     }
     if ((arg === "--map" || arg === "-m") && args[i + 1]) {
       for (const part of args[i + 1]!.split(/[\s,]+/)) {
-        const bits = part.split(":");
-        if (bits.length < 2) continue;
-        const listenBit =
-          bits.length >= 3 && bits[0] !== "0.0.0.0"
-            ? bits[0]
-            : bits.length === 2
-              ? bits[0]
-              : undefined;
-        const candidate = listenBit ? Number(listenBit) : undefined;
-        if (
-          candidate !== undefined &&
-          Number.isFinite(candidate) &&
-          candidate > 0 &&
-          candidate <= 65535
-        ) {
-          ports.push(candidate);
+        if (!part) continue;
+        // Delegate to the canonical parser: a bare split(":") cannot tell
+        // "5432:5433" from "0.0.0.0:5432:host:5433" and mangles bracketed
+        // IPv6, which used to silently yield no ports (disabling the
+        // post-install listening check).
+        try {
+          const m = parseRelayMapping(part);
+          if (m.listenPort > 0 && m.listenPort <= 65535) {
+            ports.push(m.listenPort);
+          }
+        } catch {
+          // ignore unparsable relay mapping
         }
       }
     }
