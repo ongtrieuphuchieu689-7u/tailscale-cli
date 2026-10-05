@@ -1,6 +1,7 @@
 import http from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { URL } from "node:url";
+import { maskSecret } from "./core.js";
 
 export interface OAuthWrapperOptions {
   mcpTarget?: string;
@@ -21,6 +22,15 @@ interface IssuedCode {
 
 function s256(verifier: string): string {
   return createHash("sha256").update(verifier).digest("base64url");
+}
+
+/**
+ * Refresh tokens are bearer credentials handed to the MCP client, so they need
+ * the same CSPRNG as the authorization codes above — Math.random() (V8
+ * xorshift128+) is predictable from a handful of outputs.
+ */
+function newRefreshToken(): string {
+  return randomBytes(32).toString("base64url");
 }
 
 export function startOAuthWrapper(
@@ -203,7 +213,9 @@ export function startOAuthWrapper(
       clientId: clientIdParam,
       expiresAt: Date.now() + 300000,
     });
-    setTimeout(() => codes.delete(code), 300000);
+    // Expiry is also checked on lookup; this timer only bounds memory, so it
+    // must not keep the process alive on its own.
+    setTimeout(() => codes.delete(code), 300000).unref();
     const redirect = new URL(redirectUri);
     redirect.searchParams.set("code", code);
     if (state) redirect.searchParams.set("state", state);
@@ -259,9 +271,7 @@ export function startOAuthWrapper(
         }
         json(res, {
           access_token: token,
-          refresh_token:
-            Math.random().toString(36).slice(2) +
-            Math.random().toString(36).slice(2),
+          refresh_token: newRefreshToken(),
           token_type: "Bearer",
           expires_in: 3600,
           scope: "mcp.read mcp.write offline_access",
@@ -272,9 +282,7 @@ export function startOAuthWrapper(
       if (grant === "client_credentials" || grant === "refresh_token") {
         json(res, {
           access_token: token,
-          refresh_token:
-            Math.random().toString(36).slice(2) +
-            Math.random().toString(36).slice(2),
+          refresh_token: newRefreshToken(),
           token_type: "Bearer",
           expires_in: 3600,
           scope: "mcp.read mcp.write offline_access",
@@ -352,7 +360,7 @@ export function startOAuthWrapper(
 
   server.listen(port, "0.0.0.0", () => {
     console.log(
-      `[oauth-wrapper] listening on 0.0.0.0:${port} → ${mcpTarget}, public ${publicUrl}, client ${clientId}, secret ${clientSecret.slice(0, 5)}...`,
+      `[oauth-wrapper] listening on 0.0.0.0:${port} → ${mcpTarget}, public ${publicUrl}, client ${clientId}, secret ${maskSecret(clientSecret)}`,
     );
   });
   return server;

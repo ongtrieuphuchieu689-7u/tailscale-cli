@@ -777,12 +777,40 @@ export function maskToken(value: string): string {
 /**
  * Profile names reach us from user-supplied config files and are used both as
  * a TOML table key (`[profiles.<name>]`) and as a filename
- * (`<cacheDir>/profile-pw/<name>.pw`). Restrict them to a safe character set
- * so a crafted name cannot escape the cache dir or inject extra TOML keys.
+ * (`<cacheDir>/profile-pw/<name>.pw`).
+ *
+ * TOML bare keys only allow `A-Za-z0-9_-`, so staying inside that set keeps
+ * `[profiles.<name>]` a valid table header without quoting, and — since the
+ * result contains no "." or path separator — makes it a plain filename that
+ * cannot escape the password cache dir.
  */
 export function sanitizeProfileName(name: string): string {
-  const cleaned = name.replace(/[^A-Za-z0-9._-]/g, "_").replace(/^\.+/, "");
+  const cleaned = name.replace(/[^A-Za-z0-9_-]/g, "_");
   return cleaned.length > 0 ? cleaned.slice(0, 64) : "relay-profile";
+}
+
+/**
+ * Render a value as a quoted TOML basic string.
+ *
+ * Profile fields (user, database, accessMode, password file path) come from
+ * user-supplied relay config and are interpolated straight into config.toml.
+ * Without escaping, a value containing `"` or a newline terminates the string
+ * early and lets the rest of the value inject arbitrary TOML keys.
+ */
+export function tomlString(value: string): string {
+  let out = '"';
+  for (const ch of value) {
+    const code = ch.codePointAt(0)!;
+    if (ch === "\\") out += "\\\\";
+    else if (ch === '"') out += '\\"';
+    else if (ch === "\n") out += "\\n";
+    else if (ch === "\r") out += "\\r";
+    else if (ch === "\t") out += "\\t";
+    else if (code < 0x20 || code === 0x7f)
+      out += `\\u${code.toString(16).padStart(4, "0")}`;
+    else out += ch;
+  }
+  return `${out}"`;
 }
 
 /**
@@ -825,10 +853,14 @@ export async function registerRelayProfiles(options: {
     // best effort (e.g. non-POSIX filesystem)
   }
 
-  const defaultName =
-    defaultProfile ?? mappings[0]?.name ?? `relay-${mappings[0]?.listenPort}`;
+  // default_profile must reference the *sanitized* profile key below, so any
+  // name that had to be rewritten (or a caller-supplied defaultProfile) would
+  // otherwise point at a profile that does not exist.
+  const defaultName = sanitizeProfileName(
+    defaultProfile ?? mappings[0]?.name ?? `relay-${mappings[0]?.listenPort}`,
+  );
 
-  const lines: string[] = [`default_profile = "${defaultName}"`, ""];
+  const lines: string[] = [`default_profile = ${tomlString(defaultName)}`, ""];
 
   for (const m of mappings) {
     const profileName = sanitizeProfileName(m.name ?? `relay-${m.listenPort}`);
@@ -848,10 +880,10 @@ export async function registerRelayProfiles(options: {
     lines.push(`[profiles.${profileName}]`);
     lines.push(`host = "127.0.0.1"`);
     lines.push(`port = ${m.listenPort}`);
-    lines.push(`dbname = "${database}"`);
-    lines.push(`user = "${user}"`);
-    lines.push(`password_file = '${pwFile}'`);
-    lines.push(`access_mode = "${accessMode}"`);
+    lines.push(`dbname = ${tomlString(database)}`);
+    lines.push(`user = ${tomlString(user)}`);
+    lines.push(`password_file = ${tomlString(pwFile)}`);
+    lines.push(`access_mode = ${tomlString(accessMode)}`);
     lines.push(`schemas = []`);
     lines.push(`deny_schemas = []`);
     lines.push(`deny_tables = []`);

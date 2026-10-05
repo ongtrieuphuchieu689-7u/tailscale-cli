@@ -87,4 +87,68 @@ describe("oauth-wrapper authorization codes", () => {
     badClient.searchParams.set("code_challenge_method", "S256");
     expect((await fetch(badClient)).status).toBe(401);
   });
+
+  async function token(
+    body: Record<string, string>,
+  ): Promise<Record<string, string>> {
+    const res = await fetch(`${base}/token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64")}`,
+      },
+      body: new URLSearchParams(body),
+    });
+    expect(res.status).toBe(200);
+    return (await res.json()) as Record<string, string>;
+  }
+
+  // Regression: the refresh_token was still built from two Math.random() calls
+  // even after the authorization codes were moved to a CSPRNG, so a client
+  // holding a refresh token held a predictable bearer credential.
+  it("issues CSPRNG refresh tokens on every grant", async () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 10; i += 1) {
+      const viaCredentials = await token({ grant_type: "client_credentials" });
+      expect(viaCredentials.refresh_token).toMatch(/^[A-Za-z0-9_-]+$/);
+      expect(viaCredentials.refresh_token!.length).toBeGreaterThanOrEqual(40);
+      seen.add(viaCredentials.refresh_token!);
+
+      const viaRefresh = await token({
+        grant_type: "refresh_token",
+        refresh_token: viaCredentials.refresh_token!,
+      });
+      expect(viaRefresh.refresh_token).toMatch(/^[A-Za-z0-9_-]+$/);
+      seen.add(viaRefresh.refresh_token!);
+    }
+    expect(seen.size).toBe(20);
+  });
+
+  it("exchanges an authorization code exactly once", async () => {
+    const code = await authorize("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    const granted = await token({
+      grant_type: "authorization_code",
+      code,
+      code_verifier: verifier,
+      redirect_uri: REDIRECT,
+    });
+    expect(granted.refresh_token).toMatch(/^[A-Za-z0-9_-]+$/);
+
+    // Replay of a single-use code must fail.
+    const replay = await fetch(`${base}/token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64")}`,
+      },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        code_verifier: verifier,
+        redirect_uri: REDIRECT,
+      }),
+    });
+    expect(replay.status).toBe(400);
+  });
 });

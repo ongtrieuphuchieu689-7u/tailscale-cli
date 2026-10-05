@@ -2,7 +2,13 @@ import { describe, it, expect } from "vitest";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import {
   maskConnString,
   connStringWithoutPassword,
@@ -13,6 +19,7 @@ import {
   startNexqlMcpHttp,
   registerRelayProfiles,
   sanitizeProfileName,
+  tomlString,
   type NexqlMcpRunner,
 } from "../src/nexql-mcp.js";
 
@@ -182,7 +189,7 @@ describe("nexql-mcp helpers", () => {
         "utf8",
       );
       expect(toml).toContain("[profiles.relay-primary]");
-      expect(toml).toContain(`password_file = '${pwFile}'`);
+      expect(toml).toContain(`password_file = "${pwFile}"`);
       // The secret itself must only ever live in the .pw file.
       expect(toml).not.toContain("sup3r-s3cret");
     } finally {
@@ -204,9 +211,127 @@ describe("nexql-mcp helpers", () => {
     expect(sanitizeProfileName('x"]\nsecret = "1')).not.toContain('"');
     expect(sanitizeProfileName("x]\ndir = [")).not.toContain("]");
     expect(sanitizeProfileName("")).toBe("relay-profile");
-    expect(sanitizeProfileName("...")).toBe("relay-profile");
+    expect(sanitizeProfileName("...")).toBe("___");
     // Ordinary names survive untouched.
     expect(sanitizeProfileName("relay-primary")).toBe("relay-primary");
-    expect(sanitizeProfileName("relay_2.local-3")).toBe("relay_2.local-3");
+    expect(sanitizeProfileName("relay_2-local")).toBe("relay_2-local");
+    // TOML bare keys only allow A-Za-z0-9_-; anything else (notably ".") would
+    // make `[profiles.<name>]` an invalid table header for nexql-mcp.
+    expect(sanitizeProfileName("relay.prod")).toBe("relay_prod");
+    for (const name of ["a.b", "..", "1 2", "ünïcode", "x]y"]) {
+      expect(sanitizeProfileName(name)).toMatch(/^[A-Za-z0-9_-]+$/);
+    }
+  });
+
+  it("escapes TOML values so config fields cannot inject keys", () => {
+    expect(tomlString('a"b')).toBe('"a\\"b"');
+    expect(tomlString("a\\b")).toBe('"a\\\\b"');
+    expect(tomlString("a\nb")).toBe('"a\\nb"');
+    expect(tomlString("a\tb")).toBe('"a\\tb"');
+    expect(tomlString("a\u0007b")).toBe('"a\\u0007b"');
+    expect(tomlString("plain")).toBe('"plain"');
+    // A newline + quote payload can no longer break out of the string.
+    expect(tomlString('x"\n[profiles.evil]\nuser = "root')).not.toContain("\n");
+  });
+
+  // Regression: profile names are sanitized before use, so `default_profile`
+  // and the `[profiles.<name>]` key were built from different strings. Any name
+  // that had to be rewritten left default_profile pointing at a profile that
+  // does not exist (and unescaped quotes corrupted the file outright).
+  it("points default_profile at the sanitized profile key", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tscli-pwdefault-"));
+    const prevBin = process.env.TS_BIN_DIR;
+    const prevHome = process.env.HOME;
+    const prevUserProfile = process.env.USERPROFILE;
+    try {
+      process.env.TS_BIN_DIR = dir;
+      process.env.HOME = dir;
+      process.env.USERPROFILE = dir;
+
+      await registerRelayProfiles({
+        runner: { kind: "path", command: ["nexql-mcp"], installedBy: "found" },
+        mappings: [
+          {
+            listenPort: 15432,
+            targetHost: "127.0.0.1",
+            targetPort: 5432,
+            user: 'post"gres',
+            database: 'd\n[profiles.evil]\nuser = "root',
+            password: "pw",
+            name: 'my "prod" db',
+          },
+        ],
+      });
+
+      const toml = readFileSync(
+        join(dir, ".config", "nexql-mcp", "config.toml"),
+        "utf8",
+      );
+      // One key per mapping, and default_profile refers to it.
+      expect(toml).toContain('default_profile = "my__prod__db"');
+      expect(toml).toContain("[profiles.my__prod__db]");
+      // The injected table header survives only as escaped text inside the
+      // dbname value, never as a real header.
+      expect(toml.split("\n").filter((l) => l.startsWith("["))).toEqual([
+        "[profiles.my__prod__db]",
+      ]);
+      // Values keep their payload but stay on one line and inside quotes.
+      expect(toml).toContain('user = "post\\"gres"');
+      expect(
+        toml.split("\n").filter((l) => l.startsWith("dbname = ")),
+      ).toHaveLength(1);
+      // The password file follows the sanitized name.
+      expect(existsSync(join(dir, "profile-pw", "my__prod__db.pw"))).toBe(true);
+    } finally {
+      if (prevBin === undefined) delete process.env.TS_BIN_DIR;
+      else process.env.TS_BIN_DIR = prevBin;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = prevUserProfile;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The --profile flags handed to nexql-mcp must match the keys written here.
+  it("sanitizes an explicit defaultProfile too", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tscli-pwexplicit-"));
+    const prevBin = process.env.TS_BIN_DIR;
+    const prevHome = process.env.HOME;
+    const prevUserProfile = process.env.USERPROFILE;
+    try {
+      process.env.TS_BIN_DIR = dir;
+      process.env.HOME = dir;
+      process.env.USERPROFILE = dir;
+
+      await registerRelayProfiles({
+        runner: { kind: "path", command: ["nexql-mcp"], installedBy: "found" },
+        mappings: [
+          {
+            listenPort: 15432,
+            targetHost: "127.0.0.1",
+            targetPort: 5432,
+            password: "pw",
+            name: "primary",
+          },
+        ],
+        defaultProfile: "primary",
+      });
+
+      const toml = readFileSync(
+        join(dir, ".config", "nexql-mcp", "config.toml"),
+        "utf8",
+      );
+      expect(toml).toContain('default_profile = "primary"');
+      expect(toml).toContain("[profiles.primary]");
+    } finally {
+      if (prevBin === undefined) delete process.env.TS_BIN_DIR;
+      else process.env.TS_BIN_DIR = prevBin;
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = prevUserProfile;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

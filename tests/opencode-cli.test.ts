@@ -27,7 +27,7 @@ async function runCli(args: string[]): Promise<void> {
   for (let i = 0; i < 10; i += 1) await new Promise((r) => setTimeout(r, 5));
 }
 
-describe("opencode --stop", () => {
+describe("opencode-cli entrypoint", () => {
   beforeEach(() => {
     runOpenCodeFlow.mockReset();
     stopOpenCodeFlow.mockReset();
@@ -68,5 +68,60 @@ describe("opencode --stop", () => {
     expect(runOpenCodeFlow).not.toHaveBeenCalled();
     // The failure must still be reported.
     expect(process.exitCode).toBe(1);
+  });
+
+  // Regression: --state-dir is declared in --help and in the agent manifest,
+  // but resolveConfig() only reads TS_STATE_DIR, so the flag was dropped and
+  // tailscaled always used the default state location.
+  it("passes --state-dir through to the deploy config", async () => {
+    runOpenCodeFlow.mockResolvedValue({
+      opencode: {
+        runner: { kind: "path", command: ["opencode"], installedBy: "found" },
+        port: 3000,
+        permissionConfig: {},
+        permissionWritten: [],
+        permissionExisting: [],
+        logPath: "/tmp/opencode-serve.log",
+      },
+      deployment: { warnings: [] },
+      urls: [],
+      verified: false,
+    });
+
+    await runCli(["--state-dir", "/var/lib/tailscale-custom", "--json"]);
+
+    expect(runOpenCodeFlow).toHaveBeenCalledTimes(1);
+    expect(runOpenCodeFlow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          stateDir: "/var/lib/tailscale-custom",
+        }),
+      }),
+    );
+  });
+
+  // No flag: the resolved config must be left untouched.
+  it("leaves config.stateDir unset when --state-dir is absent", async () => {
+    runOpenCodeFlow.mockResolvedValue({
+      opencode: {
+        runner: { kind: "path", command: ["opencode"], installedBy: "found" },
+        port: 3000,
+        permissionConfig: {},
+        permissionWritten: [],
+        permissionExisting: [],
+        logPath: "/tmp/opencode-serve.log",
+      },
+      deployment: { warnings: [] },
+      urls: [],
+      verified: false,
+    });
+
+    await runCli(["--json"]);
+
+    expect(runOpenCodeFlow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.not.objectContaining({ stateDir: expect.anything() }),
+      }),
+    );
   });
 });

@@ -486,11 +486,17 @@ export function startRelay(options: RelayOptions): Promise<RelayInstance> {
     server.once("error", (err) => {
       reject(err);
     });
-    // ...but errors raised after the server is listening must not surface as an
-    // unhandled 'error' event. Per-connection errors are handled separately.
-    server.on("error", () => {});
+    // ...but errors raised after the server is listening (EMFILE on accept,
+    // EMFILE on the reverse connection, …) must not become an unhandled
+    // 'error' event that kills the process. Surface them like every other
+    // relay error instead of swallowing them.
+    let listening = false;
+    server.on("error", (err: Error) => {
+      if (listening && onError) onError(err);
+    });
 
     server.listen(listenPort, listenHost, () => {
+      listening = true;
       resolve({
         server,
         close: () =>

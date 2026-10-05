@@ -1317,6 +1317,7 @@ import {
   startNexqlMcpHttp,
   stopNexqlMcpHttp,
   registerRelayProfiles,
+  sanitizeProfileName,
   maskConnString,
   maskToken,
   randomToken,
@@ -2109,9 +2110,11 @@ program
         const retryInterval = dbRetryInterval;
         let stopping = false;
 
-        // Collect profile names from mappings for --profile flag
-        const profileNames = resolvedMappings.map(
-          (m) => m.name ?? `relay-${m.listenPort}`,
+        // Collect profile names from mappings for --profile flag. These must be
+        // the sanitized names registerRelayProfiles() writes into config.toml,
+        // otherwise nexql-mcp is told to load a profile that does not exist.
+        const profileNames = resolvedMappings.map((m) =>
+          sanitizeProfileName(m.name ?? `relay-${m.listenPort}`),
         );
 
         // Re-register profiles before EVERY spawn: nexql-mcp rotates the
