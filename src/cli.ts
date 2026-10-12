@@ -258,7 +258,7 @@ function resolvedCredentialEnv(): string | undefined {
 }
 
 function envTagOwner(): string[] | undefined {
-  const value = process.env.TS_TAG_OWNER?.trim();
+  const value = configEnv().TS_TAG_OWNER?.trim();
   if (!value) return undefined;
   return value
     .split(",")

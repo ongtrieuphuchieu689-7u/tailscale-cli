@@ -9,7 +9,7 @@ import {
 import { dirname, join as joinPath } from "node:path";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
-import { resolveUserName, maskEnv, isSecretValue } from "./config.js";
+import { resolveUserName, maskEnv, envHasSecrets } from "./config.js";
 import { loadRelayConfigFile } from "../relay.js";
 import { registryAdd, registryRemove, registryList } from "./registry.js";
 import type {
@@ -373,5 +373,5 @@ export function maskedEnvLog(config: ServiceConfig): Record<string, string> {
 }
 
 export function hasSecretEnv(config: ServiceConfig): boolean {
-  return Object.values(config.env).some((v) => isSecretValue(v));
+  return envHasSecrets(config.env);
 }

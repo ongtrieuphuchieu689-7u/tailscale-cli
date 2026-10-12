@@ -307,7 +307,7 @@ export function startOAuthWrapper(
 
   const server = http.createServer((req, res) => {
     console.log(
-      `[oauth-wrapper] ${req.method} ${req.url} Host:${req.headers.host}`,
+      `[oauth-wrapper] ${req.method} ${req.url?.split("?")[0] ?? "/"} Host:${req.headers.host}`,
     );
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
@@ -351,7 +351,7 @@ export function startOAuthWrapper(
 
   server.listen(port, "0.0.0.0", () => {
     console.log(
-      `[oauth-wrapper] listening on 0.0.0.0:${port} → ${mcpTarget}, public ${publicUrl}, client ${clientId}, secret ${clientSecret.slice(0, 5)}...`,
+      `[oauth-wrapper] listening on 0.0.0.0:${port} → ${mcpTarget}, public ${publicUrl}, client ${clientId}, secret ${clientSecret ? "configured" : "missing"}`,
     );
   });
   return server;
