@@ -107,6 +107,15 @@ describe("service config", () => {
     expect(masked.TS_CLIENT_SECRET).toBe("****");
   });
 
+  it("B1-8 masks env entries by sensitive key name even when the value is not secret-like", () => {
+    const masked = maskEnv({
+      PGPASSWORD: "hunter2",
+      DB_PORT: "5432",
+    });
+    expect(masked.PGPASSWORD).toBe("****");
+    expect(masked.DB_PORT).toBe("5432");
+  });
+
   it("throws SERVICE_CONFIG_NOT_FOUND for a missing file", () => {
     expect(() => loadServiceConfig(`${tmpDir}/missing.json`)).toThrow(
       /SERVICE_CONFIG_NOT_FOUND/,

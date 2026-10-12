@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { dirname, join as joinPath } from "node:path";
 import os from "node:os";
-import { resolveUserName, maskEnv, isSecretValue } from "./config.js";
+import { resolveUserName, maskEnv, envHasSecrets } from "./config.js";
 import { loadRelayConfigFile } from "../relay.js";
 import { registryAdd, registryRemove, registryList } from "./registry.js";
 import type {
@@ -261,7 +261,7 @@ export function maskedEnvMacOS(config: ServiceConfig): Record<string, string> {
 }
 
 export function hasSecretEnvMacOS(config: ServiceConfig): boolean {
-  return Object.values(config.env).some((v) => isSecretValue(v));
+  return envHasSecrets(config.env);
 }
 
 export function detectRelayPortsMacOS(args: string[]): number[] {

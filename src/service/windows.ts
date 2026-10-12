@@ -141,7 +141,7 @@ ${envLines ? `${envLines}\n` : ""}</service>
 }
 
 function scQuery(name: string): string {
-  const result = spawnSync("sc", ["query", name], { encoding: "utf8" });
+  const result = spawnSync("sc", ["queryex", name], { encoding: "utf8" });
   return result.status === 0 ? (result.stdout ?? "") : "";
 }
 

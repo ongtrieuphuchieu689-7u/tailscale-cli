@@ -145,6 +145,9 @@ export const manifest = {
         ["--ssh | --no-ssh"],
         ["--state-dir <path>"],
         ["--backup-dir <path>"],
+        ["--key-expiry <value>"],
+        ["--tag-owner <owner...>"],
+        ["--credential-env <name>"],
       ],
       consumes: {
         inputs: [
@@ -194,6 +197,9 @@ export const manifest = {
         ["--ssh | --no-ssh"],
         ["--state-dir <path>"],
         ["--backup-dir <path>"],
+        ["--key-expiry <value>"],
+        ["--tag-owner <owner...>"],
+        ["--credential-env <name>"],
       ],
       consumes: {
         inputs: ["same as deploy", "TS_NO_CLEANUP=1 disables auto-cleanup"],

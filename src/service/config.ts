@@ -13,6 +13,9 @@ const NAME_RE = /^[a-zA-Z0-9-]+$/;
 const SECRET_VALUE_RE =
   /tskey-|secret|token|password|passwd|api[_-]?key|credential/i;
 
+const SECRET_KEY_RE =
+  /secret|token|password|passwd|api[_-]?key|credential|auth/i;
+
 const DEFAULT_RESTART: ServiceRestartPolicy = {
   onFailure: true,
   delaySeconds: 5,
@@ -213,14 +216,22 @@ export function resolveUserName(user: string): string {
   return user === "current" ? os.userInfo().username : user;
 }
 
+export function isSecretValue(value: string): boolean {
+  return SECRET_VALUE_RE.test(value);
+}
+
+export function isSecretEntry(key: string, value: string): boolean {
+  return SECRET_KEY_RE.test(key) || SECRET_VALUE_RE.test(value);
+}
+
 export function maskEnv(env: Record<string, string>): Record<string, string> {
   const masked: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
-    masked[key] = SECRET_VALUE_RE.test(value) ? "****" : value;
+    masked[key] = isSecretEntry(key, value) ? "****" : value;
   }
   return masked;
 }
 
-export function isSecretValue(value: string): boolean {
-  return SECRET_VALUE_RE.test(value);
+export function envHasSecrets(env: Record<string, string>): boolean {
+  return Object.entries(env).some(([key, value]) => isSecretEntry(key, value));
 }
